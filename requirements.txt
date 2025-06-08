@@ -1,0 +1,6 @@
+numpy
+scipy
+matplotlib
+msgpack-rpc-python
+airsim==1.6.1
+gymnasium
