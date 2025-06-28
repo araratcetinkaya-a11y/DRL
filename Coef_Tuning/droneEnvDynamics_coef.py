@@ -627,77 +627,95 @@ class AirsimDynamicsEnv(gym.Env):
 
 
     def compute_reward_final(self):
-        """
-        Compute a scalar reward combining:
-        • Progress toward the goal (“reward_step”)
-        • Proximity to the goal    (“reward_distance”)
-        • Yaw alignment            (“reward_yaw”)
-        • Quadratic penalty for getting too close to obstacles (“obs_penalty”)
-        • Small per‐step efficiency penalty (“step_penalty”)
-        """
-        # 1) Current distance to goal (2D or 3D)
-        if self.navigation_3d:
-            current_target_distance = self.get_distance_to_goal_3d()
-        else:
-            current_target_distance = self.get_distance_to_goal_2d()
+            """
+            Compute a scalar reward combining:
+            • Progress toward the goal (“reward_step”)
+            • Proximity to the goal    (“reward_distance”)
+            • Yaw alignment            (“reward_yaw”)
+            • Quadratic penalty for getting too close to obstacles (“obs_penalty”)
+            • Small per‐step efficiency penalty (“step_penalty”)
+            """
 
-        # 2) Progress reward: positive if we moved closer since last step
-        reward_step = self.previous_target_distance - current_target_distance
-        self.previous_target_distance = current_target_distance
+            # 1) Compute current distance to goal (2D or 3D)
+            if self.navigation_3d:
+                current_dist = self.get_distance_to_goal_3d()
+            else:
+                current_dist = self.get_distance_to_goal_2d()
+                prev_dist = self.previous_target_distance
 
-        # 3) Distance‐to‐goal reward: encourages getting near the goal
-        r_d = current_target_distance / self.goal_distance
-        reward_distance = max(0.0, 1.0 - r_d**2)
+            # 2) Progress reward: thresholded dynamic normalization Dynamic Normalization 
+            delta = prev_dist - current_dist 
+            step_threshold      = 1 #%% Need to be changed to variable during Tune 
+            if delta >= step_threshold:  # e.g. 1.0 m
+                reward_step = delta / max(prev_dist, 0.1)  # ε clamp
+            else:
+                reward_step = 0.0
 
-        # 4) Yaw‐alignment reward: penalize large heading errors and oscillations
-        current_yaw_error = self.get_relative_yaw()
-        yaw_threshold = 0.1
-        if abs(current_yaw_error) > yaw_threshold:
-            reward_yaw = self.previous_heading - current_yaw_error
-        else:
-            reward_yaw = 0.0
-        # discourage rapid yaw changes
-        yaw_change_penalty = -0.1 * abs(self.previous_heading - current_yaw_error)
-        reward_yaw += yaw_change_penalty
-        self.previous_heading = current_yaw_error
+            # 3) Distance‐to‐goal reward: potential‐difference shaping
+            
+            alpha_dist             = 1  #%% Need to be changed to variable during Tune 
+            prev_phi_dist          = 1.0 - (prev_dist / (inital_goal_distance)) ** 2
+            curr_phi_dist          = 1.0 - (current_dist / (inital_goal_distance)) ** 2
+            reward_distance        =  alpha_dist * curr_phi_dist - prev_phi_dist
 
-        # 5) Obstacle‐proximity penalty (quadratic inside threshold, zero outside)
-        threshold = 0.5   # meters: start penalizing inside this distance
-        k = 2          # penalty scale
-        d = self.min_distance_to_obstacles  # in meters
+            # 4) Yaw‐alignment reward: potential‐difference + smooth rate penalty
+            
+            alpha_yaw           = 1         #%% Need to be changed to variable during Tune 
+            curr_err = self.get_relative_yaw()
+            prev_err = self.previous_heading
+            prev_phi_yaw = -abs(prev_err)
+            curr_phi_yaw = -abs(curr_err)
+            reward_yaw = alpha_yaw * curr_phi_yaw - prev_phi_yaw
+            
 
-        if d < threshold:
-            # α ∈ [0,1]: how far into the forbidden zone we are
-            alpha = (threshold - d) / threshold
-            obs_penalty = -k * (alpha ** 2)
-        else:
-            obs_penalty = 0.0
+            # 5) Obstacle‐proximity penalty: potential‐difference shaping
+            k_obs           = 1                             #%% Need to be changed to variable during Tune
+            thresh_obs      = 0.5                           #%% Need to be changed to variable during Tune
+            alpha_obs       = 1                             #%% Need to be changed to variable during Tune
+            prev_phi_obs    = self.prev_obs_phi
+            d_obs           = self.min_distance_to_obstacles
 
-        # 6) Small per‐step efficiency penalty
-        step_penalty = -0.35 * (1.0 + (current_target_distance / self.goal_distance))
+            if d_obs < thresh_obs:
+                gamma_obs = (thresh_obs - d_obs) / thresh_obs
+                curr_phi_obs = -k_obs * (gamma_obs ** 2)
+            else:
+                curr_phi_obs = 0.0
 
-        # 7) Combine shaping terms (the ones we want to scale by 0.5)
-        shaping = (2.0 * reward_step
-               + 0.1* reward_distance
-               + 2* reward_yaw)
+            obs_penalty = alpha_obs * curr_phi_obs - prev_phi_obs
 
-        # 8) The final “base_reward” for this step
-        base_reward = shaping + obs_penalty +   step_penalty
+            # 6) Small per‐step efficiency penalty
+            base_pen   = 0.35       #%% Need to be changed to variable during Tune
+            dist_coeff = 1          #%% Need to be changed to variable during Tune
+            step_penalty = -base_pen * (1.0 + dist_coeff * (current_dist / (inital_goal_distance)))
 
-        
+            # 7) Combine shaping terms with unique weights
+            
+            weight_reward_step      = 1 #%% Need to be changed to variable during Tune
+            weight_reward_distance  = 1 #%% Need to be changed to variable during Tune 
+            weight_yaw_reward       = 1 #%% Need to be changed to variable during Tune 
+            
+            shaping = weight_reward_step * reward_step \
+                    + weight_reward_distance * reward_distance \
+                    + weight_yaw_reward * reward_yaw
 
-        return {
-        "reward_step": reward_step,
-        "reward_distance": reward_distance,
-        "reward_yaw": reward_yaw,
-        "obs_penalty": obs_penalty,
-        "step_penalty": step_penalty,
-        "shaping": shaping,
-        "base_reward": base_reward,
-        }
+            # 8) Final reward
+            base_reward = shaping + obs_penalty + step_penalty
 
+            # ────────────────────────────────────────────────────────────────────
+            # Update stored state _once_ at end
+            self.previous_target_distance = current_dist
+            self.previous_heading         = curr_err
+            self.prev_obs_phi             = curr_phi_obs
 
-
+            return {
+                "reward_step":      reward_step,
+                "reward_distance":  reward_distance,
+                "reward_yaw":       reward_yaw,
+                "obs_penalty":      obs_penalty,
+                "step_penalty":     step_penalty,
+                "shaping":          shaping,
+                "base_reward":      base_reward,
+            }
 
     def do_action(self, action):
         '''
