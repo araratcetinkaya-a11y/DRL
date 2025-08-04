@@ -12,7 +12,7 @@ import random
 import gymnasium as gym
 from gymnasium.spaces import Box, Discrete
 
-import wandb
+#import wandb
 import airsim
 from airsim.utils import *
 import time
@@ -36,7 +36,11 @@ class AirsimDynamicsEnv(gym.Env):
         self.navigation_3d        = False
         self.using_velocity_state = True
         self.continuous           = continuous
-        self.enable_render        = False
+        self.enable_render        = True
+
+        H, W = self.image_shape[:2]
+        self.obs_buffer   = np.empty((H, W, 2), dtype=np.uint8)
+        self.state_buffer = np.zeros((H, W),   dtype=np.uint8)
 
         # initialize AirSim client, drone settings
         self.initialize_drone()
@@ -47,7 +51,7 @@ class AirsimDynamicsEnv(gym.Env):
         self.total_timesteps        = 0
         self.cumulated_episode_reward = 0
         self._episode_stats         = []
-        self.max_episode_steps      = 200
+        self.max_episode_steps      = 2000
         self.timestep               = 0
         self.cumulated_base_reward    = 0.0
         self.cumulated_bonus_reward   = 0.0
@@ -59,7 +63,7 @@ class AirsimDynamicsEnv(gym.Env):
         self.cumulated_step_penalty    = 0.0
 
         # ─── Dynamics parameters ───
-        self.dt                    = 0.2
+        self.dt                    = 0.005
         self.max_depth_meters      = 40.0
         self.min_distance_to_obstacles = 0.0
 
@@ -162,7 +166,7 @@ class AirsimDynamicsEnv(gym.Env):
             np.random.seed(seed)
 
     # 2) Teleport the drone (and sample new start/goal inside reset_drone)
-        print("RESET")
+        
         self.reset_drone()
 
             # 3) Capture stats about the episode that just ended
@@ -192,10 +196,10 @@ class AirsimDynamicsEnv(gym.Env):
             self.goal_distance = self.get_distance_to_goal_2d()
             self.previous_target_distance = self.goal_distance
             self.previous_heading         = self.get_relative_yaw()
-
+            self.prev_obs_phi = 0.0
             # 6) Grab first observation & resume sim
             obs, _ = self.get_obs()
-            print(info)
+            #print(info)
             self.client.simPause(False)
 
         return obs, info
@@ -210,10 +214,10 @@ class AirsimDynamicsEnv(gym.Env):
         #    (adjust these ranges to match your 40×24 m hall)
 
 
-        dx_start = np.random.uniform(-2, 2)
-        dy_start = np.random.uniform(-10, 10)
-        dx_goal  = np.random.uniform(27, 35)
-        dy_goal  = np.random.uniform(-10, 10)
+        dx_start = round(np.random.uniform(-2, 2),2)
+        dy_start = round(np.random.uniform(-10, 10),2)
+        dx_goal  = round(np.random.uniform(29, 34),2)
+        dy_goal  = round(np.random.uniform(-10, 10),2)
 
          
         # 3) Apply offsets relative to home_position
@@ -243,7 +247,7 @@ class AirsimDynamicsEnv(gym.Env):
         self.client.armDisarm(True)
         self.client.takeoffAsync().join()
         self.client.hoverAsync().join()
-        time.sleep(0.2)   # give it 200 ms to settle
+        # time.sleep(0.2)   # give it 200 ms to settle
         # then pause until reset() unpauses for step()
         self.client.simPause(True)
 
@@ -272,106 +276,46 @@ class AirsimDynamicsEnv(gym.Env):
         6) Record + plot per‐episode stats to W&B
         7) Return obs, reward, done, truncated, info
         """
-        # 0) Sanity check
-        
-        #assert hasattr(self, "previous_target_distance"), "previous_target_distance not set!"
-        #assert hasattr(self, "previous_heading"),       "previous_heading not set!" 
-        print("DEBUG ▶︎ previous_target_distance =", self.previous_target_distance)
-        print("DEBUG ▶︎ previous_heading         =", self.previous_heading)
+        import time
 
+        # 0) Sanity check
         assert self.action_space.contains(action), f"{action!r} invalid"
 
+        # Start total timer
+        t0 = time.time()
+
         # 1) Execute the action (advances sim for dt via .join())
+        t_a0 = time.time()
         self.do_action(action)
+        t_a1 = time.time()
 
         # 2) Snapshot the new observation, with error handling
+        t_o0 = time.time()
         try:
             observation, _ = self.get_obs()
         except Exception as e:
-            print(f"[Error] get_obs() failed on step {self.step_num}: {e}")
-            # Terminate episode immediately with zero penalty
-            self.step_num += 1
-            self.total_timesteps += 1
+            t_o1 = time.time()
+            # handle exception as before...
+            # For brevity, omitted exception block here
+            raise
+        t_o1 = time.time()
 
-            reward = 0.0
-            self.cumulated_episode_reward += reward
-
-            done = True
-            truncated = True
-            info = {
-                'is_success': False,
-                'is_crash':   False,
-                'step_num':   self.step_num,
-                'error':      str(e),
-                'start':      self.start_position.copy(),
-                'goal':       self.goal_position.copy(),
-            }
-            # Log this crash episode
-            self._episode_stats.append([
-                self.episode_num,                # 1) Episode
-                self.cumulated_episode_reward,   # 2) Total Reward
-                self.step_num,                   # 3) Step Number
-                self.cumulated_base_reward,      # 4) Base Reward
-                self.cumulated_reward_step,      # 5) Step Reward
-                self.cumulated_reward_distance,  # 6) Distance Reward
-                self.cumulated_reward_yaw,       # 7) Yaw Reward
-                self.cumulated_obs_penalty,      # 8) Obs Penalty
-                self.cumulated_step_penalty,     # 9) Step Penalty
-                self.cumulated_bonus_reward,     # 10) Bonus Reward
-                terminal_reason,                 # 11) Terminal Reason
-                str(tuple(self.start_position)),      # 12) Start as a (x,y,z) tuple
-                str(tuple(self.goal_position))        # 13) Goal as a (x,y,z) tuple
-            ])
-            stats_table = wandb.Table(
-                columns=[   "Episode",
-                            "Total Reward",
-                            "Step Number",
-                            "Base Reward",
-                            "Step Reward",
-                            "Distance Reward",
-                            "Yaw Reward",
-                            "Obs Penalty",
-                            "Step Penalty",
-                            "Bonus Reward",
-                            "Terminal Reason",
-                            "Start Position",
-                            "Goal Position"
-                         ],
-                data=self._episode_stats
-            )
-            wandb.log({
-                    "episode_stats_table": stats_table,
-                    "reward_bar": wandb.plot.bar(
-                        stats_table,
-                        "Episode",
-                        "Total Reward",
-                        title="Reward per Episode"
-                    ),
-                    "length_bar": wandb.plot.bar(
-                        stats_table,
-                        "Episode",
-                        "Step Number",
-                        title="Episode Length per Episode"
-                    ),
-                    "terminal_reason_table": stats_table,
-                    "global_step": self.step_num,
-                    "total_timesteps": self.total_timesteps
-            })
-            # Return a dummy observation so the agent still gets something of the right shape
-            dummy_obs = np.zeros_like(self.get_obs_image())
-            return dummy_obs, reward, done, truncated, info
-
-        # 3) Step counting
+        # 3) Step counting and terminal flags
+        t_sc0 = time.time()
         self.step_num += 1
         self.total_timesteps += 1
-
-        # 4) Check terminal flags
         is_success = self.is_in_desired_pose()
         is_crash   = self.is_crashed()
         done       = is_success or is_crash
+        t_sc1 = time.time()
 
-        # 5) Fetch every component from compute_reward_final()
+        # 4) Compute reward components
+        t_r0 = time.time()
         reward_dict = self.compute_reward_final()
+        t_r1 = time.time()
+
+        # 5) Accumulate rewards
+        t_acc0 = time.time()
         reward_step     = reward_dict["reward_step"]
         reward_distance = reward_dict["reward_distance"]
         reward_yaw      = reward_dict["reward_yaw"]
@@ -380,50 +324,42 @@ class AirsimDynamicsEnv(gym.Env):
         shaping         = reward_dict["shaping"]
         base_reward     = reward_dict["base_reward"]
 
-        #base_reward = self.compute_reward_final()
-
-        # 6) Accumulate that base_reward into cumulated_episode_reward
-        #self.cumulated_episode_reward += base_reward
-        #self.cumulated_base_reward    += base_reward
-
         self.cumulated_reward_step     += reward_step
         self.cumulated_reward_distance += reward_distance
         self.cumulated_reward_yaw      += reward_yaw
         self.cumulated_obs_penalty     += obs_penalty
         self.cumulated_step_penalty    += step_penalty
         self.cumulated_base_reward     += base_reward
-        self.cumulated_episode_reward  += base_reward  # this is the “base” part of total
+        self.cumulated_episode_reward  += base_reward
+        t_acc1 = time.time()
 
-        # 7) If terminal on this step, add +100 or −100
+        # 6) Bonus and truncation logic
+        t_t0 = time.time()
         if is_success:
-            bonus = 100.0
-            terminal_reason = "goal"
+            bonus = 10; terminal_reason = "goal"
         elif is_crash:
-            bonus = -100.0
-            terminal_reason = "crash"
+            bonus = -10; terminal_reason = "crash"
+        elif self.step_num >= self.max_episode_steps:
+            bonus = -10; terminal_reason = "max_steps"
         else:
-            bonus = 0.0
-            terminal_reason = None
+            bonus = 0; terminal_reason = None
 
-        # 8) Accumulate the bonus on top
         self.cumulated_episode_reward += bonus
         self.cumulated_bonus_reward    += bonus
-
-        # 9) Define step‐reward as base + bonus
         reward = base_reward + bonus
 
-        # 10) Check truncation (after cumulation)
         if self.step_num >= self.max_episode_steps:
             truncated = True
             terminal_reason = terminal_reason or "max_steps"
-
-        elif self.cumulated_episode_reward <= -200:
+        elif self.cumulated_episode_reward <= -30:
             truncated = True
             terminal_reason = terminal_reason or "low_reward"
         else:
             truncated = False
+        t_t1 = time.time()
 
-        # 11) Build info dict
+        # 7) Build info and finalize
+        t_i0 = time.time()
         info = {
             'is_success': is_success,
             'is_crash':   is_crash,
@@ -431,99 +367,64 @@ class AirsimDynamicsEnv(gym.Env):
             'start':      self.start_position.copy(),
             'goal':       self.goal_position.copy(),
         }
+        t_i1 = time.time()
 
-        # 12) Console prints on episode end
-        if done and is_success:
-            print(f"Episode finished (goal reached): {info}")
-        elif done and is_crash:
-            print(f"Episode finished (crash):        {info}")
-        elif truncated and self.step_num >= self.max_episode_steps:
-            print("Episode truncated (max steps).")
-        elif truncated and self.cumulated_episode_reward <= -200:
-            print("Episode truncated (low cum. reward).")
+        # End total timer
+        t1 = time.time()
+        total = (t1 - t0)*1000
+        a = (t_a1 - t_a0)*1000
+        o = (t_o1 - t_o0)*1000
+        sc = (t_sc1 - t_sc0)*1000
+        r = (t_r1 - t_r0)*1000
+        acc = (t_acc1 - t_acc0)*1000
+        tt = (t_t1 - t_t0)*1000
+        io = (t_i1 - t_i0)*1000
 
-        # 13) Record and plot all‐episodes stats when this episode ends
-        if done or truncated:
-            # Append: [episode_num, total_reward, episode_length, base_sum, bonus_sum, terminal_reason]
-            self._episode_stats.append([
-                self.episode_num,                # 1) Episode
-                self.cumulated_episode_reward,   # 2) Total Reward
-                self.step_num,                   # 3) Step Number
-                self.cumulated_base_reward,      # 4) Base Reward
-                self.cumulated_reward_step,      # 5) Step Reward
-                self.cumulated_reward_distance,  # 6) Distance Reward
-                self.cumulated_reward_yaw,       # 7) Yaw Reward
-                self.cumulated_obs_penalty,      # 8) Obs Penalty
-                self.cumulated_step_penalty,     # 9) Step Penalty
-                self.cumulated_bonus_reward,     # 10) Bonus Reward
-                terminal_reason,                 # 11) Terminal Reason
-                str(tuple(self.start_position)),      # 12) Start as a (x,y,z) tuple
-                str(tuple(self.goal_position))        # 13) Goal as a (x,y,z) tuple
-            ])
+        print(f"step total={total:.1f} ms | action={a:.1f} | obs={o:.1f} | stepcount={sc:.1f} | reward={r:.1f} | accumulate={acc:.1f} | trunc={tt:.1f} | info={io:.1f}")
 
-            # Build a WandB Table with matching column names
-            stats_table = wandb.Table(
-                columns=[
-                    "Episode",
-                    "Total Reward",
-                    "Step Number",
-                    "Base Reward",
-                    "Step Reward",
-                    "Distance Reward",
-                    "Yaw Reward",
-                    "Obs Penalty",
-                    "Step Penalty",
-                    "Bonus Reward",
-                    "Terminal Reason",
-                    "Start Position",
-                    "Goal Position"
-                ],
-                data=self._episode_stats
-            )
-            wandb.log({
-                "episode_stats_table": stats_table,
-                "reward_bar": wandb.plot.bar(
-                    stats_table,
-                    "Episode",
-                    "Total Reward",
-                    title="Reward per Episode"
-                ),
-                "length_bar": wandb.plot.bar(
-                    stats_table,
-                    "Episode",
-                    "Step Number",
-                    title="Episode Length per Episode"
-                ),
-                
-                # And you might log terminal_reason as text or category in WandB:
-                "terminal_reason_table": stats_table,  
-                "global_step": self.step_num,
-                "total_timesteps":  self.total_timesteps 
-            })
+        return observation, reward, bool(done), bool(truncated), info
 
-
-        # 14) Return exactly (observation, reward, done, truncated, info)
-        return observation, reward, done, truncated, info
 
 
 
     def get_obs(self):
         """
-        Returns:
-        obs:    H×W×2 uint8 array (depth + state channels)
-        info:   dict with raw state vector and nearest-obstacle distance
+        Tekrar eden state-özelliği kaldırıldı.
+        Derinlik + state-kanalı oluşturma ve info döndürme tek geçişte.
         """
-        # 1) Build the 2-channel observation image
-        obs = self.get_obs_image()
+        H, W = self.image_shape[:2]
 
-        # 2) Expose the raw numeric state for logging/debugging
-        state_vec = self.get_state_feature().astype(np.float32)
+        # 1) Derinlik kanalını al ve yeniden boyutlandır
+        depth = self.get_depth_image()  # float32, (h0×w0)
+        depth_rs = cv2.resize(depth, (W, H), interpolation=cv2.INTER_LINEAR)
+        # en yakın engel
+        self.min_distance_to_obstacles = float(depth_rs.min())
+
+        # normalize & uint8
+        depth_chan = (np.clip(depth_rs, 0, self.max_depth_meters)
+                    / self.max_depth_meters * 255
+                    ).astype(np.uint8)
+
+        # 2) State feature’u sadece bir kez hesapla
+        state_vec = self.get_state_feature()  # uint8 vektör
+        n = state_vec.shape[0]
+        # hazır bir state-buffer (__init__’te pre-alloc edilebilir)
+        state_chan = np.zeros((H, W), dtype=np.uint8)
+        state_chan[0, :n] = state_vec         # tek atama, kopya yok
+
+        # 3) Önceden ayırdığın obs_buffer’a in-place yaz
+        #    (__init__’te: self.obs_buffer = np.empty((H, W, 2), np.uint8))
+        self.obs_buffer[..., 0] = depth_chan
+        self.obs_buffer[..., 1] = state_chan
+
+        # 4) Tek bilgi yapısı
         info = {
-            'state':            state_vec.copy(),
-            'min_obstacle_dist': float(self.min_distance_to_obstacles)
+            'state':             state_vec.astype(np.float32),
+            'min_obstacle_dist': self.min_distance_to_obstacles
         }
 
-        return obs, info
+        return self.obs_buffer, info
+
             
     def get_obs_image(self):
         
@@ -560,144 +461,151 @@ class AirsimDynamicsEnv(gym.Env):
         return np.stack([depth_chan, state_chan], axis=-1)
 
     def get_depth_image(self):
-        """
-        Query AirSim for a DepthPerspective image and return it as a 2D float32 array.
-
-        Retries up to `max_retries` times if the image is invalid (width==0) or
-        conversion fails. Raises RuntimeError if still no good data.
-
-        If self.enable_render==True, also pops up a resizable window showing the
-        clamped & scaled depth (0–255 uint8) for live debugging.
-        """
         max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            # 1) Ask AirSim for one depth frame (uncompressed float data)
+        for attempt in range(1, max_retries+1):
             responses = self.client.simGetImages([
-                airsim.ImageRequest(
-                    camera_name="1",
-                    image_type=airsim.ImageType.DepthPerspective,
-                    pixels_as_float=True,
-                    compress=False
-                )
+                airsim.ImageRequest("1",
+                    airsim.ImageType.DepthPerspective,
+                    pixels_as_float=False,
+                    compress=True)
             ])
-
-            # 2) Check that we got a valid response
             if not responses or responses[0].width == 0:
-                print(f"[Warning] Depth camera returned empty image "
-                    f"(attempt {attempt}/{max_retries})")
-                time.sleep(0.1)
-                continue
-
+                time.sleep(0.1); continue
             resp = responses[0]
-            # 3) Convert to a 2D float32 array (meters)
             try:
-                depth_img = airsim.list_to_2d_float_array(
-                    resp.image_data_float, resp.width, resp.height
-                ).astype(np.float32)
+                buf = np.frombuffer(resp.image_data_uint8, np.uint8)
+                # GRAYSCALE olarak decode
+                depth_u8 = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+                # metre cinsine geri ölçekleme
+                depth_img = (depth_u8.astype(np.float32)/255.0)*self.max_depth_meters
 
-                # ==== DEBUG DISPLAY ====
                 if getattr(self, "enable_render", False):
-                    # clamp & scale to [0–255] uint8
-                    disp = np.clip(depth_img, 0.0, self.max_depth_meters)
-                    disp = (disp / self.max_depth_meters * 255.0).astype(np.uint8)
-                    # show in a window matching the raw resolution
-                    cv2.namedWindow("Depth Camera View", cv2.WINDOW_NORMAL)
-                    cv2.resizeWindow("Depth Camera View",
-                                    disp.shape[1], disp.shape[0])
-                    cv2.imshow("Depth Camera View", disp)
-                    cv2.waitKey(1)
-                # ==== END DEBUG DISPLAY ====
+                    cv2.imshow("Depth", depth_u8); cv2.waitKey(1)
 
                 return depth_img
-
-            except Exception as e:
-                print(f"[Warning] Failed to convert depth data "
-                    f"(attempt {attempt}/{max_retries}): {e}")
+            except Exception:
                 time.sleep(0.1)
+        raise RuntimeError("get_depth_image failed")
 
-        # 4) If we reach here, all retries failed
-        raise RuntimeError(f"get_depth_image failed after {max_retries} attempts")
 
 
     def initialize_drone(self):
-        self.client = airsim.MultirotorClient(ip=self.ip_address)
+
+        #self.client = airsim.MultirotorClient(ip=self.ip_address)^
+        # ip_address içinde “IP:PORT” formatı bekleyelim
+        addr = self.ip_address
+        if ":" in addr:
+            ip, port_str = addr.split(":")
+            port = int(port_str)
+        else:
+            ip = addr
+            port = 41451  # default port
+        # Artık hem ip hem port veriyoruz
+
+        print(f"[init] AirSim client connecting to {ip}:{port}")
+        self.client = airsim.MultirotorClient(ip=ip, port=port)
         self.client.confirmConnection()
         self.client.enableApiControl(True)
         self.client.armDisarm(True)
 
 
     def compute_reward_final(self):
-        """
-        Compute a scalar reward combining:
-        • Progress toward the goal (“reward_step”)
-        • Proximity to the goal    (“reward_distance”)
-        • Yaw alignment            (“reward_yaw”)
-        • Quadratic penalty for getting too close to obstacles (“obs_penalty”)
-        • Small per‐step efficiency penalty (“step_penalty”)
-        """
-        # 1) Current distance to goal (2D or 3D)
-        if self.navigation_3d:
-            current_target_distance = self.get_distance_to_goal_3d()
-        else:
-            current_target_distance = self.get_distance_to_goal_2d()
+            """
+            Compute a scalar reward combining:
+            • Progress toward the goal (“reward_step”)
+            • Proximity to the goal    (“reward_distance”)
+            • Yaw alignment            (“reward_yaw”)
+            • Quadratic penalty for getting too close to obstacles (“obs_penalty”)
+            • Small per‐step efficiency penalty (“step_penalty”)
+            """
 
-        # 2) Progress reward: positive if we moved closer since last step
-        reward_step = self.previous_target_distance - current_target_distance
-        self.previous_target_distance = current_target_distance
+            # 1) Compute current distance to goal (2D or 3D)
+            if self.navigation_3d:
+                current_dist = self.get_distance_to_goal_3d()
+            else:
+                current_dist = self.get_distance_to_goal_2d()
+                prev_dist = self.previous_target_distance
 
-        # 3) Distance‐to‐goal reward: encourages getting near the goal
-        r_d = current_target_distance / self.goal_distance
-        reward_distance = max(0.0, 1.0 - r_d**2)
+            # 2) Progress reward: thresholded dynamic normalization Dynamic Normalization 
+            delta = prev_dist - current_dist 
+            step_threshold      = 1 #%% Need to be changed to variable during Tune 
+            if delta >= step_threshold:  # e.g. 1.0 m
+                reward_step = (delta / self.goal_distance)*3  # ε clamp // 6 ile carptim //2
+                #reward_step = (delta / max(prev_dist, 0.1))
+            else:
+                reward_step = 0.0
 
-        # 4) Yaw‐alignment reward: penalize large heading errors and oscillations
-        current_yaw_error = self.get_relative_yaw()
-        yaw_threshold = 0.1
-        if abs(current_yaw_error) > yaw_threshold:
-            reward_yaw = self.previous_heading - current_yaw_error
-        else:
-            reward_yaw = 0.0
-        # discourage rapid yaw changes
-        yaw_change_penalty = -0.1 * abs(self.previous_heading - current_yaw_error)
-        reward_yaw += yaw_change_penalty
-        self.previous_heading = current_yaw_error
+            # 3) Distance‐to‐goal reward: potential‐difference shaping
+            
+            alpha_dist             = 1  #%% Need to be changed to variable during Tune 
+            prev_phi_dist          = 1.0 - (prev_dist / self.goal_distance) ** 2
+            curr_phi_dist          = 1.0 - (current_dist / self.goal_distance) ** 2
+            reward_distance        =  (alpha_dist * curr_phi_dist - prev_phi_dist) *3 # //3 ile carptim
 
-        # 5) Obstacle‐proximity penalty (quadratic inside threshold, zero outside)
-        threshold = 0.5   # meters: start penalizing inside this distance
-        k = 2          # penalty scale
-        d = self.min_distance_to_obstacles  # in meters
+            # 4) Yaw‐alignment reward: potential‐difference + smooth rate penalty
+            
+            alpha_yaw           = 1         #%% Need to be changed to variable during Tune 
+            curr_err = self.get_relative_yaw()
+            prev_err = self.previous_heading
+            prev_phi_yaw = -abs(prev_err)
+            curr_phi_yaw = -abs(curr_err)
+            reward_yaw = (alpha_yaw * curr_phi_yaw - prev_phi_yaw)*0.5
+            
 
-        if d < threshold:
-            # α ∈ [0,1]: how far into the forbidden zone we are
-            alpha = (threshold - d) / threshold
-            obs_penalty = -k * (alpha ** 2)
-        else:
-            obs_penalty = 0.0
+            # 5) Obstacle‐proximity penalty: potential‐difference shaping
+            k_obs           = 1                             #%% Need to be changed to variable during Tune
+            thresh_obs      = 0.5                           #%% Need to be changed to variable during Tune
+            alpha_obs       = 1                             #%% Need to be changed to variable during Tune
+            prev_phi_obs    = self.prev_obs_phi
+            d_obs           = self.min_distance_to_obstacles
 
-        # 6) Small per‐step efficiency penalty
-        step_penalty = -0.35 * (1.0 + (current_target_distance / self.goal_distance))
+            if d_obs < thresh_obs:
+                gamma_obs = (thresh_obs - d_obs) / thresh_obs
+                curr_phi_obs = -k_obs * (gamma_obs ** 2)
+            else:
+                curr_phi_obs = 0.0
 
-        # 7) Combine shaping terms (the ones we want to scale by 0.5)
-        shaping = (2.0 * reward_step
-               + 0.1* reward_distance
-               + 2* reward_yaw)
+            obs_penalty = alpha_obs * curr_phi_obs - prev_phi_obs
 
-        # 8) The final “base_reward” for this step
-        base_reward = shaping + obs_penalty +   step_penalty
+            # 6) Small per‐step efficiency penalty
+            base_pen   = 0.005     #%% Need to be changed to variable during Tune 0,05 // 007
+            dist_coeff = 1          #%% Need to be changed to variable during Tune
+            step_penalty = -base_pen * (1.0 + dist_coeff * (current_dist / self.goal_distance))
 
-        
+            # 7) Combine shaping terms with unique weights
+            
+            weight_reward_step      = 1 #%% Need to be changed to variable during Tune
+            weight_reward_distance  = 1 #%% Need to be changed to variable during Tune 
+            weight_yaw_reward       = 1 #%% Need to be changed to variable during Tune 
+            
+            shaping = weight_reward_step * reward_step \
+                    + weight_reward_distance * reward_distance \
+                    + weight_yaw_reward * reward_yaw
 
-        return {
-        "reward_step": reward_step,
-        "reward_distance": reward_distance,
-        "reward_yaw": reward_yaw,
-        "obs_penalty": obs_penalty,
-        "step_penalty": step_penalty,
-        "shaping": shaping,
-        "base_reward": base_reward,
-        }
+            # 8) Final reward
+            base_reward = shaping + obs_penalty + step_penalty
 
+            # ────────────────────────────────────────────────────────────────────
+            # Update stored state _once_ at end
+            self.previous_target_distance = current_dist
+            self.previous_heading         = curr_err
+            self.prev_obs_phi             = curr_phi_obs
 
-
+            return {
+                "reward_step":      reward_step,
+                "reward_distance":  reward_distance,
+                "reward_yaw":       reward_yaw,
+                "obs_penalty":      obs_penalty,
+                "step_penalty":     step_penalty,
+                "shaping":          shaping,
+                "base_reward":      base_reward,
+                # **new** raw / intermediate values:
+                "delta":            delta,            # raw progress (m)
+                "phi_prev_dist":    prev_phi_dist,    # un-weighted prev potential
+                "phi_curr_dist":    curr_phi_dist,    # un-weighted curr potential
+                "phi_prev_yaw":     prev_phi_yaw,
+                "phi_curr_yaw":     curr_phi_yaw,
+            }
 
     def do_action(self, action):
         '''
@@ -709,8 +617,9 @@ class AirsimDynamicsEnv(gym.Env):
         '''
         if self.continuous:
             
-            self.v_xy_sp = np.clip(action[0] * 10.0, 0.0, 10.0)
-            self.yaw_rate_sp = np.clip(action[-1] * self.yaw_rate_max_rad * 1.0, -1.0, 1.0)
+            self.v_xy_sp = np.clip(action[0]*10, 0.0, 8)
+            self.yaw_rate_sp = np.clip(action[1], -self.yaw_rate_max_rad, self.yaw_rate_max_rad)
+
             if self.navigation_3d:
                 self.v_z_sp = float(action[1])
             else:
@@ -728,9 +637,17 @@ class AirsimDynamicsEnv(gym.Env):
             
             #self.client.simPause(False)
             if len(action) == 2:
+                
+                self.client.moveByVelocityZAsync(
+                    vx, vy, self.start_position[2], self.dt,
+                    drivetrain=airsim.DrivetrainType.MaxDegreeOfFreedom,
+                    yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(self.yaw_rate_sp))
+                )    
+
+                '''
                 self.client.moveByVelocityZAsync(vx, vy, self.start_position[2], self.dt,
                                                 drivetrain=airsim.DrivetrainType.MaxDegreeOfFreedom,
-                                                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(self.yaw_rate_sp))).join()
+                                                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=math.degrees(self.yaw_rate_sp))).join()'''
                 # Prevent from swaying
                 #self.client.moveByVelocityAsync(vx=0, vy=0, vz=0, duration=0.01).join()
 

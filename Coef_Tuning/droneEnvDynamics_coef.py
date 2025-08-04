@@ -192,7 +192,7 @@ class AirsimDynamicsEnv(gym.Env):
             self.goal_distance = self.get_distance_to_goal_2d()
             self.previous_target_distance = self.goal_distance
             self.previous_heading         = self.get_relative_yaw()
-
+            self.prev_obs_phi = 0.0
             # 6) Grab first observation & resume sim
             obs, _ = self.get_obs()
             print(info)
@@ -458,7 +458,12 @@ class AirsimDynamicsEnv(gym.Env):
                 self.cumulated_bonus_reward,     # 10) Bonus Reward
                 terminal_reason,                 # 11) Terminal Reason
                 str(tuple(self.start_position)),      # 12) Start as a (x,y,z) tuple
-                str(tuple(self.goal_position))        # 13) Goal as a (x,y,z) tuple
+                str(tuple(self.goal_position)),        # 13) Goal as a (x,y,z) tuple
+                reward_dict["delta"],            # 14) raw Δ (progress)
+                reward_dict["phi_prev_dist"],    # 15) φ_prev_dist
+                reward_dict["phi_curr_dist"],    # 16) φ_curr_dist
+                reward_dict["phi_prev_yaw"],     # 17) φ_prev_yaw
+                reward_dict["phi_curr_yaw"],     # 18) φ_curr_yaw
             ])
 
             # Build a WandB Table with matching column names
@@ -476,7 +481,12 @@ class AirsimDynamicsEnv(gym.Env):
                     "Bonus Reward",
                     "Terminal Reason",
                     "Start Position",
-                    "Goal Position"
+                    "Goal Position",
+                    "delta",
+                    "phi_prev_dist",
+                    "phi_curr_dist",
+                    "phi_prev_yaw",
+                    "phi_curr_yaw"
                 ],
                 data=self._episode_stats
             )
@@ -654,8 +664,8 @@ class AirsimDynamicsEnv(gym.Env):
             # 3) Distance‐to‐goal reward: potential‐difference shaping
             
             alpha_dist             = 1  #%% Need to be changed to variable during Tune 
-            prev_phi_dist          = 1.0 - (prev_dist / (inital_goal_distance)) ** 2
-            curr_phi_dist          = 1.0 - (current_dist / (inital_goal_distance)) ** 2
+            prev_phi_dist          = 1.0 - (prev_dist / self.goal_distance) ** 2
+            curr_phi_dist          = 1.0 - (current_dist / self.goal_distance) ** 2
             reward_distance        =  alpha_dist * curr_phi_dist - prev_phi_dist
 
             # 4) Yaw‐alignment reward: potential‐difference + smooth rate penalty
@@ -686,7 +696,7 @@ class AirsimDynamicsEnv(gym.Env):
             # 6) Small per‐step efficiency penalty
             base_pen   = 0.35       #%% Need to be changed to variable during Tune
             dist_coeff = 1          #%% Need to be changed to variable during Tune
-            step_penalty = -base_pen * (1.0 + dist_coeff * (current_dist / (inital_goal_distance)))
+            step_penalty = -base_pen * (1.0 + dist_coeff * (current_dist / self.goal_distance))
 
             # 7) Combine shaping terms with unique weights
             
@@ -715,6 +725,12 @@ class AirsimDynamicsEnv(gym.Env):
                 "step_penalty":     step_penalty,
                 "shaping":          shaping,
                 "base_reward":      base_reward,
+                # **new** raw / intermediate values:
+                "delta":            delta,            # raw progress (m)
+                "phi_prev_dist":    prev_phi_dist,    # un-weighted prev potential
+                "phi_curr_dist":    curr_phi_dist,    # un-weighted curr potential
+                "phi_prev_yaw":     prev_phi_yaw,
+                "phi_curr_yaw":     curr_phi_yaw,
             }
 
     def do_action(self, action):
