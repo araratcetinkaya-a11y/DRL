@@ -11,4 +11,5 @@ scripts/lgmd/
 __pycache__/
 *.pyc
 *.pyc
+venv38/
 gym_env/gym_env/envs/airsim_env copy.py
