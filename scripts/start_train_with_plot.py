@@ -1,12 +1,32 @@
+# --- make repo root importable no matter how we run this file ---
+import sys, os
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+# (debug - bir kez bakıp sonra silebilirsin)
+# print("DEBUG start file:", __file__, "\nDEBUG sys.path[0]:", sys.path[0])
+
+import argparse
+from PyQt5 import QtWidgets
+from configparser import ConfigParser
+
+# İKİ MODDA DA ÇALIŞAN import (önce paketli, olmazsa fallback)
+try:
+    from scripts.utils.thread_train import TrainingThread
+    from scripts.utils.ui_train import TrainingUi
+except ImportError:
+    from utils.thread_train import TrainingThread
+    from utils.ui_train import TrainingUi
+
 import sys
 import argparse
-
+import os 
 from PyQt5 import QtWidgets
 
 # from evaluate_td3 import evaluate
-from utils.thread_train import TrainingThread
+from scripts.utils.thread_train import TrainingThread
 # from utils.thread_train_fixedwing import TrainingThread
-from utils.ui_train import TrainingUi
+from scripts.utils.ui_train import TrainingUi
 from configparser import ConfigParser
 
 
@@ -18,7 +38,7 @@ def get_parser():
     parser.add_argument('-objective', required=True, help='training objective')
 
     return parser
-
+    
 
 def main():
     # select your config file here
@@ -28,6 +48,9 @@ def main():
 
     # 1. Create the qt thread
     app = QtWidgets.QApplication(sys.argv)
+    #print("CONFIG PATH (raw):", config_file)
+    #print("CONFIG PATH (abs):", os.path.abspath(config_file))
+    #print("EXISTS?", os.path.exists(config_file))
     gui = TrainingUi(config_file)
     gui.show()
 

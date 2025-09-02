@@ -16,6 +16,8 @@ import gym_env
 
 from configparser import ConfigParser
 
+
+
 client = airsim.VehicleClient()
 client.confirmConnection()
 
@@ -29,7 +31,7 @@ camera = client.simGetCameraInfo("0")
 env = gym.make('airsim-env-v0')
 
 cfg = ConfigParser()
-cfg.read('configs\config_SimpleAvoid_SimpleMultirotor.ini')
+cfg.read('configs\config_Maze_SimpleMultirotor_2D.ini') 
 env.set_config(cfg)
 
 start_time = time.time()

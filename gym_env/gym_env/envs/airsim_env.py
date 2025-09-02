@@ -198,6 +198,61 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         except NoOptionError:
             self.reward_type = None
 
+    def _rb_reset(self):
+        # episode boyunca toplanacak terimler
+        self._rb_sums = {
+            "r_dist": 0.0, "c_pose": 0.0, "c_obs": 0.0,
+            "c_act": 0.0, "c_yaw": 0.0, "c_step": 0.0,
+            "r_total": 0.0
+        }
+        self._rb_steps = 0
+        self._d0 = None          # bölüm başı hedef mesafesi
+        self._dT = None          # o andaki hedef mesafesi
+        self._min_obs = float("inf")
+
+    def _rb_update_step(self, terms: dict, diag: dict):
+        # her adımda birikenleri güncelle
+        self._rb_steps += 1
+        for k, v in terms.items():
+            self._rb_sums[k] += float(v)
+        if "d_now" in diag:
+            self._dT = float(diag["d_now"])
+            if self._d0 is None:
+                self._d0 = float(diag["d_now"])
+        if "min_obs_dist" in diag:
+            self._min_obs = min(self._min_obs, float(diag["min_obs_dist"]))       
+
+    def _print_ep_summary(self, info: dict):
+    # güvenli çıkış
+        if "ep_sums" not in info or "terminal" not in info:
+            return
+        s = info["ep_sums"]
+        reason = s.get("ep/done_reason_str", "unknown")
+
+        # sayıları toparla
+        r_tot = s.get("R_ep/r_total", 0.0)
+        r_dist = s.get("R_ep/r_dist", 0.0)
+        c_pose = s.get("R_ep/c_pose", 0.0)
+        c_obs  = s.get("R_ep/c_obs", 0.0)
+        c_act  = s.get("R_ep/c_act", 0.0)
+        c_yaw  = s.get("R_ep/c_yaw", 0.0)
+        prog   = s.get("ep/progress_frac", float("nan"))
+        elen   = s.get("ep/len", 0)
+        minobs = s.get("ep/min_obs_dist", float("nan"))
+
+        # tek satırlık net özet
+        print(
+            f"[EP {self.episode_num:05d}] len={elen:3d}  reason={reason:7s}  "
+            f"progress={prog:5.2f}  min_obs={minobs:5.2f}  "
+            f"R_total={r_tot:7.2f} | dist={r_dist:6.2f}  "
+            f"- pose={c_pose:6.2f} - obs={c_obs:6.2f} - act={c_act:6.2f} - yaw={c_yaw:6.2f}"
+        )
+
+
+    def _print_ep_header(self):
+
+        print("EP     len  reason   progress  min_obs   R_total |  dist   - pose   - obs    - act    - yaw")
+
     def reset(self):
         # reset state
         self.dynamic_model.reset()
@@ -209,7 +264,11 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         self.previous_distance_from_des_point = self.dynamic_model.goal_distance
 
         self.trajectory_list = []
-
+        self._rb_reset()
+        d0 = self.get_distance_to_goal_3d()     # 3D mesafe fonksiyonun
+        self._d0 = d0
+        self._dT = d0
+        #self._print_ep_header()
         obs = self.get_obs()
 
         return obs
@@ -234,8 +293,10 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             'is_not_in_workspace': self.is_not_inside_workspace(),
             'step_num': self.step_num
         }
+        '''
         if done:
             print(info)
+        '''
 
         # ----------------compute reward---------------------------
         if self.dynamic_name == 'SimpleFixedwing':
@@ -248,7 +309,11 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         elif self.reward_type == 'reward_lqr':
             reward = self.compute_reward_lqr(done, action)
         elif self.reward_type == 'reward_final':
-            reward = self.compute_reward_final(done, action)
+            # >>> breakdown'lı çağrı
+            reward, terms, diag = self.compute_reward_final(done, action, return_terms=True)
+            info["reward_terms"] = terms
+            info["diag"] = diag
+            self._rb_update_step(terms, diag)
         else:
             reward = self.compute_reward(done, action)
 
@@ -297,6 +362,35 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
                     self.visual_log_q_value(q_value, action, reward)
 
+
+        if done:
+            term = {
+                "reach": int(self.is_in_desired_pose()),
+                "crash": int(self.is_crashed()),
+                "outside": int(self.is_not_inside_workspace()),
+            }
+            term["timeout"] = int(1 - max(term.values()))
+            info["terminal"] = term
+
+            progress = None
+            if self._d0 is not None and self._d0 > 1e-6 and self._dT is not None:
+                progress = (self._d0 - self._dT) / self._d0
+
+            ep_sums = {f"R_ep/{k}": float(v) for k, v in self._rb_sums.items()}
+            ep_sums.update({
+                "ep/len": self._rb_steps,
+                "ep/progress_frac": float(progress) if progress is not None else float("nan"),
+                "ep/min_obs_dist": float(self._min_obs),
+                "ep/done_reason_str": max(term, key=term.get),
+            })
+            info["ep_sums"] = ep_sums
+
+            # >>> TEK SATIRLIK ÖZETİ BAS
+            self._print_ep_summary(info)
+
+            # bir sonraki bölüm için buffer'ları sıfırla
+            self._rb_reset()
+            
         self.step_num += 1
         self.total_step += 1
 
@@ -518,72 +612,107 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
         return reward
 
-    def compute_reward_final(self, done, action):
+    def compute_reward_final(self, done, action, return_terms=False):
         reward = 0
-        reward_reach = 10
-        reward_crash = -20
-        reward_outside = -10
-        
+        reward_reach = 80
+        reward_crash = -100
+        reward_outside = -80
+
         if self.env_name == 'NH_center':
             distance_reward_coef = 500
         else:
             distance_reward_coef = 50
 
+        # breakdown yapıları baştan tanımlı kalsın
+        terms = {"r_dist":0.0, "c_pose":0.0, "c_obs":0.0, "c_act":0.0, "c_yaw":0.0, "c_step":0.0, "r_total":0.0}
+        diag  = {}
+
         if not done:
-            # 1 - goal reward
+            # --- distance progress ---
+            d_prev = self.previous_distance_from_des_point
             distance_now = self.get_distance_to_goal_3d()
-            reward_distance = distance_reward_coef * (self.previous_distance_from_des_point - distance_now) / \
-                self.dynamic_model.goal_distance   # normalized to 100 according to goal_distance
+            reward_distance = distance_reward_coef * (d_prev - distance_now) / self.dynamic_model.goal_distance
             self.previous_distance_from_des_point = distance_now
 
-            # 2 - Position punishment
+            # --- pose punishment ---
             current_pose = self.dynamic_model.get_position()
             goal_pose = self.dynamic_model.goal_position
-            x = current_pose[0]
-            y = current_pose[1]
-            z = current_pose[2]
-            x_g = goal_pose[0]
-            y_g = goal_pose[1]
-            z_g = goal_pose[2]
+            x, y, z = current_pose[0], current_pose[1], current_pose[2]
+            x_g, y_g, z_g = goal_pose[0], goal_pose[1], goal_pose[2]
 
-            punishment_xy = np.clip(self.getDis(
-                x, y, 0, 0, x_g, y_g) / 10, 0, 1)
-            punishment_z = 0.5 * np.clip((z - z_g)/5, 0, 1)
-
+            punishment_xy = np.clip(self.getDis(x, y, 0, 0, x_g, y_g) / 10, 0, 1)
+            punishment_z  = 0.5 * np.clip((z - z_g)/5, 0, 1)
             punishment_pose = punishment_xy + punishment_z
 
-            if self.min_distance_to_obstacles < 10:
-                punishment_obs = 1 - np.clip((self.min_distance_to_obstacles - self.crash_distance) / 5, 0, 1)
+            # --- obstacle proximity ---
+            M = 3.0  # güvenlik marjı (metre)
+            threshold = self.crash_distance + M
+            if self.min_distance_to_obstacles < threshold:
+                punishment_obs = (threshold - self.min_distance_to_obstacles) / M
             else:
-                punishment_obs = 0
+                punishment_obs = 0.0
+            punishment_obs = np.clip(punishment_obs, 0.0, 1.0)
 
+            # --- action / yaw ---
             punishment_action = 0
-
-            # add yaw_rate cost
             yaw_speed_cost = abs(action[-1]) / self.dynamic_model.yaw_rate_max_rad
 
             if self.dynamic_model.navigation_3d:
-                # add action and z error cost
                 v_z_cost = ((abs(action[1]) / self.dynamic_model.v_z_max)**2)
-                z_err_cost = (
-                    (abs(self.dynamic_model.state_raw[1]) / self.dynamic_model.max_vertical_difference)**2)
+                z_err_cost = ((abs(self.dynamic_model.state_raw[1]) / self.dynamic_model.max_vertical_difference)**2)
                 punishment_action += (v_z_cost + z_err_cost)
 
             punishment_action += yaw_speed_cost
 
-            yaw_error = self.dynamic_model.state_raw[2]
+            '''
+            yaw_error = self.dynamic_model.state_raw[2]  # deg
             yaw_error_cost = abs(yaw_error / 90)
+            '''
+            yaw_error = self.dynamic_model.state_raw[2]  # derece
+            yaw_abs = abs(yaw_error)
+            yaw_error_cost = max(yaw_abs - 15.0, 0.0) / 75.0   # 15°..90°  -> 0..1
 
-            reward = reward_distance - 0.1 * punishment_pose - 0.2 * \
-                punishment_obs - 0.1 * punishment_action - 0.5 * yaw_error_cost
+            # --- toplam ödül (tutarlı ağırlıklar) ---
+            reward = (reward_distance
+                    - 0.1 * punishment_pose
+                    - 0.5 * punishment_obs
+                    - 0.1 * punishment_action
+                    - 0.2 * yaw_error_cost)
+
+            # --- breakdown (çarpılmış katsayılarla) ---
+            terms["r_dist"]  = float(reward_distance)
+            terms["c_pose"]  = float(0.1 * punishment_pose)
+            terms["c_obs"]   = float(0.5 * punishment_obs)  
+            terms["c_act"]   = float(0.1 * punishment_action)
+            terms["c_yaw"]   = float(0.2 * yaw_error_cost)
+            terms["r_total"] = float(reward)
+
+            # --- diagnostics ---
+            diag = {
+                "d_prev": float(d_prev),
+                "d_now":  float(distance_now),
+                "d_delta": float(d_prev - distance_now),
+                "yaw_error_deg": float(yaw_error),
+                "min_obs_dist": float(self.min_distance_to_obstacles),
+                "crash_distance": float(self.crash_distance),
+                "action_vxy": float(action[0]),
+                "action_yawrate": float(action[-1]),
+                "x": float(x), "y": float(y), "z": float(z),
+                "x_g": float(x_g), "y_g": float(y_g), "z_g": float(z_g),
+            }
         else:
+            # terminal adım
             if self.is_in_desired_pose():
                 reward = reward_reach
             if self.is_crashed():
                 reward = reward_crash
             if self.is_not_inside_workspace():
                 reward = reward_outside
+            # terminal ödülü daima epizot toplamına girsin
+            terms["r_total"] = float(reward)
 
+        if return_terms:
+            return reward, terms, diag
         return reward
 
     def compute_reward_final_fixedwing(self, done, action):

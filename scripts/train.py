@@ -1,5 +1,5 @@
 import gym
-import gym_airsim_multirotor
+#import gym_airsim_multirotor
 import datetime
 import os
 
@@ -40,13 +40,14 @@ config = {
     "total_timesteps": total_steps,
     "env_name": env_name,
 }
-# run = wandb.init(
-#     project="sb3_MR_NH",
-#     config=config,
-#     sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
-#     # monitor_gym=True,  # auto-upload the videos of agents playing the game
-#     save_code=True,  # optional
-# )
+run = wandb.init(
+     project="sb3_MR_NH",
+     entity="ararat-cetinkaya-tuhh",
+     config=config,
+     sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+     # monitor_gym=True,  # auto-upload the videos of agents playing the game
+     save_code=True,  # optional
+     )
 
 # init folders
 now = datetime.datetime.now()

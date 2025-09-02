@@ -1,11 +1,16 @@
 import sys
 import argparse
-from PyQt5 import QtWidgets
-
 from utils.thread_evaluation import EvaluateThread
 from utils.ui_train import TrainingUi
 from configparser import ConfigParser
 
+from PyQt5 import QtWidgets
+
+
+
+import sys, types, utils
+sys.modules.setdefault("scripts", types.ModuleType("scripts"))
+sys.modules["scripts.utils"] = utils
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -21,12 +26,12 @@ def get_parser():
 def main():
 
     # set evaluation model path
-    eval_path = r'C:\Users\helei\Documents\GitHub\UAV_Navigation_DRL_AirSim\logs\SimpleAvoid\2022_09_06_15_05_SimpleMultirotor_No_CNN_SAC'
+    eval_path = r'C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL\UAV_Navigation_DRL_AirSim\logs\SimpleAvoid\2025_08_31_10_46_Multirotor_CNN_GAP_SAC'
 
     # select config file and model name
     config_file = eval_path + '/config/config.ini'
     # config_file = r"D:\OneDrive - mail.nwpu.edu.cn\Github\PhD-thesis-plot\CH3\3_1_simple_training_and_anaylysis\3_1_4_training_analysis_multi\data\2022_08_30_10_43_SimpleMultirotor_No_CNN_SAC\config\config.ini"
-    model_file = eval_path + '/models/model_sb3.zip'
+    model_file = eval_path + '/models/model.zip'
     # config_file = r"C:\Users\helei\Documents\GitHub\UAV_Navigation_DRL_AirSim\configs\config_new.ini"
     # model_file = eval_path + '/models/model_200000.zip'
     total_eval_episodes = 50

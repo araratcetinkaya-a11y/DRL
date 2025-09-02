@@ -1,14 +1,9 @@
 {
-    "cSpell.words": [
-        "Ornstein",
-        "Uhlenbeck",
-        "Wandb"
-    ],
-    "python.analysis.extraPaths": [
-        "./stable-baselines3"
-    ],
-    "cSpell.ignoreWords": [
-        "cuda"
-    ],
-    "python.formatting.provider": "autopep8"
+  "cSpell.words": ["Ornstein", "Uhlenbeck", "Wandb"],
+  "python.analysis.extraPaths": ["./stable-baselines3"],
+  "cSpell.ignoreWords": ["cuda"],
+  "python.formatting.provider": "autopep8",
+
+  "python.defaultInterpreterPath": "${workspaceFolder}\\venv38\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true
 }
