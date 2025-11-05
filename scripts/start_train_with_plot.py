@@ -1,6 +1,11 @@
 import sys
 import argparse
 
+from configparser import ConfigParser
+from pathlib import Path
+from stable_baselines3.common.callbacks import CallbackList
+
+
 from PyQt5 import QtWidgets
 
 # from evaluate_td3 import evaluate
@@ -8,6 +13,7 @@ from utils.thread_train import TrainingThread
 # from utils.thread_train_fixedwing import TrainingThread
 from utils.ui_train import TrainingUi
 from configparser import ConfigParser
+
 
 
 def get_parser():
@@ -34,12 +40,20 @@ def main():
     # 2. Start training thread
     training_thread = TrainingThread(config_file)
 
-    training_thread.env.action_signal.connect(gui.action_cb)
-    training_thread.env.state_signal.connect(gui.state_cb)
-    training_thread.env.attitude_signal.connect(gui.attitude_plot_cb)
-    training_thread.env.reward_signal.connect(gui.reward_plot_cb)
-    training_thread.env.pose_signal.connect(gui.traj_plot_cb)
+    base_env = training_thread.env.envs[0]
+    base_env.action_signal.connect(gui.action_cb)
+    base_env.state_signal.connect(gui.state_cb)
+    base_env.attitude_signal.connect(gui.attitude_plot_cb)
+    base_env.reward_signal.connect(gui.reward_plot_cb)
+    base_env.pose_signal.connect(gui.traj_plot_cb)
 
+
+    #training_thread.env.action_signal.connect(gui.action_cb)
+    #training_thread.env.state_signal.connect(gui.state_cb)
+    #training_thread.env.attitude_signal.connect(gui.attitude_plot_cb)
+    #training_thread.env.reward_signal.connect(gui.reward_plot_cb)
+    #training_thread.env.pose_signal.connect(gui.traj_plot_cb)
+   
     cfg = ConfigParser()
     cfg.read(config_file)
 

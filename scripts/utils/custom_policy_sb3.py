@@ -434,6 +434,13 @@ class CNN_GAP_new(BaseFeaturesExtractor):
         self.gap_layer = nn.AvgPool2d(kernel_size=(8, 10), stride=1)
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
+
+        if not hasattr(self, '_printed_math'):
+            print(f"[CNN_GAP_new KONTROLÜ] GİRİŞ shape: {observations.shape}")
+            self._printed_math = True
+
+
+
         depth_img = observations[:, 0:1, :, :]  # 0-1 0->20m 1->0m
         # print(th.min(depth_img), th.max(depth_img))
         # norm image to (-1, 1)

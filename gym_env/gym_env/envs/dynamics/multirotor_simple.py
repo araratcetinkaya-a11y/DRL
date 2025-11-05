@@ -73,9 +73,14 @@ class MultirotorDynamicsSimple():
                                            dtype=np.float32)
 
     def reset(self):
-        # reset goal
+        # 1. AirSim simülasyonunu tamamen sıfırla. Bu, sorununuzu çözen ana adımdır.
+        self.client.reset()
+        
+        # 2. API kontrolünü yeniden etkinleştir.
+        self.client.enableApiControl(True)
+
+        # Geri kalan kod, simülasyon temiz bir durumda olduğu için artık doğru çalışacaktır.
         self.update_goal_pose()
-        # reset start
         yaw_noise = self.start_random_angle * np.random.random()
         self.x = self.start_position[0]
         self.y = self.start_position[1]
@@ -85,14 +90,13 @@ class MultirotorDynamicsSimple():
         self.v_z = 0
         self.yaw_rate = 0
 
-        # reset pose
         pose = self.client.simGetVehiclePose()
         pose.position.x_val = self.x
         pose.position.y_val = self.y
         pose.position.z_val = -self.z
         pose.orientation = airsim.to_quaternion(0, 0, self.yaw)
 
-        self.client.simSetVehiclePose(pose, False)
+        self.client.simSetVehiclePose(pose, True)
 
     def set_action(self, action):
         # ------------update control command---------------

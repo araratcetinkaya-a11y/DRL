@@ -1,12 +1,41 @@
+# --- Sanal Ortam (Virtual Environment) ---
+# Asla GitHub'a yüklenmemeli!
+.venv*
+venv/
+venv38/
+
+# --- Python Cache ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Build Artefaktları ---
+*.egg-info/
+build/
+dist/
+
+# --- VS Code Ayarları ---
+.vscode/
+
+# --- 'git status' Çıktınıza Göre ---
+# Loglar, sonuçlar ve veri klasörleri:
+best_eval/
+logs_eval/
+
+# Arşivler ve Veri Dosyaları:
+*.zip
+*.npy
+*.npz
+*.csv
+*.monitor.csv
+
+# --- Önceki .gitignore Dosyanızdan Gelenler ---
+# (Yukarıdakilerle çakışmayanları ekledim)
 logs/
 wandb/
-gym_env/gym_env.egg-info/
-gym_env/gym_env/envs/lgmd/
 logs_save/
 logs_new/
 img_save/
+gym_env/gym_env/envs/lgmd/
 scripts/lgmd/
-.vscode/
-
-*.pyc
 gym_env/gym_env/envs/airsim_env copy.py
