@@ -163,6 +163,7 @@ class TrainingThread(QtCore.QThread):
                 gradient_steps=self.cfg.getint('DRL', 'gradient_steps'),
                 tensorboard_log=log_path,
                 seed=seed,
+                device="cuda",
                 verbose=2)
         elif algo == 'TD3':
             # The noise objects for TD3

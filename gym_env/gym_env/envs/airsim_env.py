@@ -171,6 +171,19 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             raise Exception("Invalid env_name!", self.env_name)
 
         self.client = self.dynamic_model.client
+        try:
+            print("Grafik ayarları Rapor 2.1'e göre sıfırlanıyor...")
+            self.client.simConsoleExecute("sg.ScalabilityLevel 0")
+            self.client.simConsoleExecute("sg.PostProcessQuality 0")
+            self.client.simConsoleExecute("sg.ShadowQuality 0")
+            self.client.simConsoleExecute("sg.TextureQuality 0")
+            self.client.simConsoleExecute("sg.EffectsQuality 0")
+            self.client.simConsoleExecute("sg.FoliageQuality 0")
+            self.client.simConsoleExecute("r.ScreenPercentage 10") # Ana ekranı %10 çözünürlüğe düşür
+            print("Grafik ayarları başarıyla sıfırlandı.")
+        except Exception as e:
+            print(f"UYARI: Konsol komutları gönderilemedi: {e}")
+            
         self.state_feature_length = self.dynamic_model.state_feature_length
         self.cnn_feature_length = self.cfg.getint('options', 'cnn_feature_num')
 
@@ -597,8 +610,13 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
   
 
     def get_depth_image(self):
-        
-        req = [airsim.ImageRequest("0", airsim.ImageType.DepthPerspective, True)]
+       
+        req = [airsim.ImageRequest(
+                "0", 
+                airsim.ImageType.DepthPerspective, 
+                pixels_as_float=True, 
+                compress=False
+            )]
         last_err = None
         for attempt in range(3):
             try:
