@@ -11,6 +11,8 @@ class MultirotorDynamicsAirsim():
     The controller is AirSim Simple Flight (https://microsoft.github.io/AirSim/simple_flight/)
     API: client.moveByVelocityZAsync(v_x, v_y, v_z, yaw_rate) is used to control
     '''
+    # multirotor_airsim.py
+
     def __init__(self, cfg) -> None:
         
         # config
@@ -51,6 +53,10 @@ class MultirotorDynamicsAirsim():
         self.prev_yaw_rate_sp = 0.0
         self.prev_yaw_rate_deg = 0.0
 
+        # --- YENİ (GÖREV B): Son eylemi saklamak için ---
+        # Geçici olarak 'None' ayarlandı, action_space'den sonra güncellenecek.
+        self.last_action = None
+
         # action space
         self.acc_xy_max =  cfg.getfloat('multirotor', 'acc_xy_max')
         self.v_xy_max =   cfg.getfloat('multirotor', 'v_xy_max')
@@ -59,40 +65,53 @@ class MultirotorDynamicsAirsim():
         self.yaw_rate_max_deg = cfg.getfloat('multirotor', 'yaw_rate_max_deg')
         self.yaw_rate_max_rad = math.radians(self.yaw_rate_max_deg)
         self.yaw_accel_max_deg_s2 = 100.0  # Maksimum dönüş ivmesi (100 deg/s^2)
-        self.yaw_delta_max_deg = self.yaw_accel_max_deg_s2 * self.dt # (100.0 * 0.1 = 10.0 deg/s her adımda)
+        self.yaw_delta_max_deg = self.yaw_accel_max_deg_s2 * self.dt 
         self.v_xy_delta_max = self.acc_xy_max * self.dt
         self.max_vertical_difference = 5
         self.v_z_min     = -self.v_z_max
 
-
-
         if self.navigation_3d:
-            if self.using_velocity_state:
-                self.state_feature_length = 6
-            else:
-                self.state_feature_length = 3
-            #self.action_space = spaces.Box(low=np.array([self.v_xy_min, -self.v_z_max, -self.yaw_rate_max_rad]),
-            #                               high=np.array([self.v_xy_max, self.v_z_max, self.yaw_rate_max_rad]),
-            #                               dtype=np.float32)
-            
+            # --- YENİ (GÖREV B): Mantıksal sıralama değişikliği ---
+            # ÖNCE action_space'i tanımla
             self.action_space = spaces.Box(
                                         low=np.array([-1.0, -1.0, -1.0]),  # [Δv_xy, Δv_z, yaw_rate]
                                         high=np.array([1.0, 1.0, 1.0]),
                                         dtype=np.float32
                                     )
-        else:
-            if self.using_velocity_state:
-                self.state_feature_length = 4
-            else:
-                self.state_feature_length = 2
-            #self.action_space = spaces.Box(low=np.array([self.v_xy_min, -self.yaw_rate_max_rad]),
-            #                               high=np.array([self.v_xy_max, self.yaw_rate_max_rad]),
-            #                               dtype=np.float32)
             
+            # ŞİMDİ action_dims'i al (bu 3 olacak)
+            action_dims = self.action_space.shape[0]
+
+            # SONRA state_feature_length'i GÜNCELLE
+            if self.using_velocity_state:
+                self.state_feature_length = 6 + action_dims # 6 (eski) + 3 (eylem) = 9
+            else:
+                self.state_feature_length = 3 + action_dims # 3 (eski) + 3 (eylem) = 6
+            # --- YENİ KOD SONU ---
+
+        else:
+            # --- YENİ (GÖREV B): Mantıksal sıralama değişikliği ---
+            # ÖNCE action_space'i tanımla
             self.action_space = spaces.Box(
                                                 low=np.array([-1.0, -1.0]),  # [Δv_xy, yaw_rate]
                                                 high=np.array([1.0, 1.0]),
                                                 dtype=np.float32)
+
+            # ŞİMDİ action_dims'i al (bu 2 olacak)
+            action_dims = self.action_space.shape[0]
+
+            # SONRA state_feature_length'i GÜNCELLE
+            if self.using_velocity_state:
+                self.state_feature_length = 4 + action_dims # 4 (eski) + 2 (eylem) = 6
+            else:
+                self.state_feature_length = 2 + action_dims # 2 (eski) + 2 (eylem) = 4
+            # --- YENİ KOD SONU ---
+
+        # --- YENİ (GÖREV B): 'last_action'ı doğru boyutta başlat ---
+        # Artık self.action_space.shape (2D veya 3D) belli olduğuna göre,
+        # 'None' olan değişkeni doğru boyutta bir numpy dizisi ile güncelliyoruz.
+        self.last_action = np.zeros(self.action_space.shape, dtype=np.float32)
+        # --- YENİ KOD SONU ---
 
     def reset(self):
         self.client.reset()
@@ -103,6 +122,10 @@ class MultirotorDynamicsAirsim():
         self.prev_v_xy_sp = 0.0
         self.prev_v_z_sp = 0.0
         self.prev_yaw_rate_deg = 0.0
+
+        # --- YENİ (GÖREV B): 'last_action' hafızasını sıfırla ---
+        self.last_action.fill(0.0)
+        # --- YENİ KOD SONU ---
 
         # reset start
         yaw_noise = self.start_random_angle * np.random.random()
@@ -125,6 +148,11 @@ class MultirotorDynamicsAirsim():
 
     def set_action(self, action):
 
+        # --- YENİ (GÖREV B): Bu adımdaki eylemi bir sonraki 'state' için sakla ---
+        # Bu, 'get_obs' çağrılmadan HEMEN ÖNCE yapılmalı.
+        self.last_action = action
+        # --- YENİ KOD SONU ---
+        
         # ----- 1. Aksiyonları çöz (Her ikisi de DELTA/İvme) -----
         
         # Eylem 0: İleri Hız İvmesi (Delta)
@@ -185,7 +213,7 @@ class MultirotorDynamicsAirsim():
         if len(action) == 2:
             self.client.moveByVelocityZAsync(
                 vx_world_sp,  # Çevrilmiş Dünya Hızı X
-                vy_world_sp,  # Çevrilmiş Dünya Hızı Y
+                vy_world_sp,  # Çevrilmiş Dünya Hızı Y 
                 -self.start_position[2], # Sabit irtifa
                 1,
                 drivetrain=airsim.DrivetrainType.MaxDegreeOfFreedom,
@@ -312,6 +340,17 @@ class MultirotorDynamicsAirsim():
                 [state_norm[0], state_norm[2], state_norm[3], state_norm[5]])
             if self.using_velocity_state == False:
                 state_norm = state_norm[:2]
+
+        
+        # --- YENİ (GÖREV B): 'last_action'ı normalize et ve state'e ekle ---
+        # self.last_action, [-1, 1] aralığındadır (Adım B3'te ayarlandı).
+        # state_norm, [0, 1] aralığındadır. Normalize et.
+        last_action_norm = (self.last_action + 1.0) / 2.0  # [-1, 1] -> [0, 2] -> [0, 1]
+        
+        # state_norm'u (2, 3, 4, 6, vb. elemanlı olabilir) 
+        # ve last_action_norm'u (2 veya 3 elemanlı) birleştir.
+        state_norm = np.concatenate([state_norm, last_action_norm]).astype(np.float32) # .astype(np.float32) eklendi
+        # --- YENİ KOD SONU ---
 
         self.state_norm = state_norm
         
