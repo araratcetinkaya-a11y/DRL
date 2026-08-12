@@ -84,7 +84,17 @@ class EvaluateThread(QtCore.QThread):
         if algo == 'TD3':
             model = TD3.load(self.model_file, env=self.env)
         elif algo == 'SAC':
+            
+            print("\n--- CURRENT EVALUATION ENV ---")
+            print("env observation_space:", self.env.observation_space)
+
+            model_test = SAC.load(self.model_file)
+
+            print("\n--- SAVED MODEL ---")
+            print("model observation_space:", model_test.observation_space)
+
             model = SAC.load(self.model_file, env=self.env)
+            
         elif algo == 'PPO':
             model = PPO.load(self.model_file, env=self.env)
         else:

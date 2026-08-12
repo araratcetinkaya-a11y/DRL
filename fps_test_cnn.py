@@ -342,7 +342,7 @@ if __name__ == "__main__":
         "screen_width": 200,
         "max_depth_meters": 15.0,
         # Fizik (T1 ÇÖZÜMÜ)
-        "dt": 0.1, # 100ms'den 20ms'ye
+        "dt": 0.04, # 100ms'den 20ms'ye
         "acc_xy_max": 2.0,
         "v_xy_max": 5.0,
         "v_xy_min": 0.5,
@@ -356,7 +356,7 @@ if __name__ == "__main__":
         "buffer_size": 100000,
         "batch_size": 512,
         "train_freq": 512, # 256 adımda BİR eğit
-        "gradient_steps": 512 # 1:1 oranı
+        "gradient_steps": 256 # 1:1 oranı
     }
     
     # HANGİ TESTİ ÇALIŞTIRMAK İSTİYORSUNUZ?

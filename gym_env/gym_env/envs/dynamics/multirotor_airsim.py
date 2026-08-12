@@ -26,6 +26,27 @@ class MultirotorDynamicsAirsim():
         self.client.confirmConnection()
         self.client.enableApiControl(True)
         self.client.armDisarm(True)
+        kp_xy = 0.6
+        ki_xy = 0.0
+        kd_xy = 0.0
+
+        kp_z = 2.0
+        ki_z = 2.0
+        kd_z = 0.0
+
+        vel_gains = airsim.VelocityControllerGains(
+            airsim.PIDGains(kp_xy, ki_xy, kd_xy),  # X
+            airsim.PIDGains(kp_xy, ki_xy, kd_xy),  # Y
+            airsim.PIDGains(kp_z,  ki_z,  kd_z),   # Z
+        )
+
+        self.client.setAngleLevelControllerGains(airsim.AngleLevelControllerGains(
+            airsim.PIDGains(2.5, 0.0, 0.0),  # Roll
+            airsim.PIDGains(2.5, 0.0, 0.0),  # Pitch
+            airsim.PIDGains(4, 0, 0.0)   # Yaw 
+        ))
+
+        self.client.setVelocityControllerGains(vel_gains)
 
         # start and goal position
         self.start_position = [0, 0, 0]
@@ -43,14 +64,14 @@ class MultirotorDynamicsAirsim():
         self.v_z = 0
         self.yaw = 0
         self.yaw_rate = 0
-
+        self.yaw_rate_cmd_deg = 0
         # cmd
         self.v_xy_sp = 0
         self.v_z_sp = 0
         self.yaw_rate_sp = 0
         self.prev_v_xy_sp = 0
         self.prev_v_z_sp  = 0
-        self.prev_yaw_rate_sp = 0.0
+        self.prev_yaw_cmd_deg = 0.0
         self.prev_yaw_rate_deg = 0.0
 
         # --- YENİ (GÖREV B): Son eylemi saklamak için ---
@@ -65,8 +86,8 @@ class MultirotorDynamicsAirsim():
         self.yaw_rate_max_deg = cfg.getfloat('multirotor', 'yaw_rate_max_deg')
         self.yaw_rate_max_rad = math.radians(self.yaw_rate_max_deg)
         self.yaw_accel_max_deg_s2 = 100.0  # Maksimum dönüş ivmesi (100 deg/s^2)
-        self.yaw_delta_max_deg = self.yaw_accel_max_deg_s2 * self.dt 
-        self.v_xy_delta_max = self.acc_xy_max * self.dt
+        self.yaw_delta_max_deg = 4
+        self.v_xy_delta_max = self.acc_xy_max 
         self.max_vertical_difference = 5
         self.v_z_min     = -self.v_z_max
 
@@ -118,17 +139,21 @@ class MultirotorDynamicsAirsim():
         # reset goal
         self.update_goal_pose()
 
+        # reset start
+        yaw_noise = self.start_random_angle * np.random.random()
+
         #speed reset
         self.prev_v_xy_sp = 0.0
         self.prev_v_z_sp = 0.0
-        self.prev_yaw_rate_deg = 0.0
+        self.v_xy_sp = 0
+        self.yaw_rate_cmd_deg = 0
+        
 
         # --- YENİ (GÖREV B): 'last_action' hafızasını sıfırla ---
         self.last_action.fill(0.0)
         # --- YENİ KOD SONU ---
 
-        # reset start
-        yaw_noise = self.start_random_angle * np.random.random()
+       
         # set airsim pose
         pose = self.client.simGetVehiclePose()
         pose.position.x_val = self.start_position[0]
@@ -146,103 +171,90 @@ class MultirotorDynamicsAirsim():
 
         self.client.simPause(True)
 
+
     def set_action(self, action):
-
-        # --- YENİ (GÖREV B): Bu adımdaki eylemi bir sonraki 'state' için sakla ---
-        # Bu, 'get_obs' çağrılmadan HEMEN ÖNCE yapılmalı.
+        
+        # --- 1. Son Eylemi Kaydet (Reward Hesaplaması İçin) ---
         self.last_action = action
-        # --- YENİ KOD SONU ---
         
-        # ----- 1. Aksiyonları çöz (Her ikisi de DELTA/İvme) -----
+        # -------------------------------------------------------
+        # 2. Lineer Hız Kontrolü (DELTA / İVME BAZLI) - KORUNDU
+        # -------------------------------------------------------
+        # action[0] -> [-1, 1]
+        # delta -> İvme * dt (Örn: 0.15 m/s artış)
+        delta_v_xy = action[0] * self.v_xy_delta_max * 1.1 #Offset var
         
-        # Eylem 0: İleri Hız İvmesi (Delta)
-        # (self.v_xy_delta_max = 5.0 m/s^2 * 0.1s = 0.5 m/s her adımda)
-        delta_v_xy = action[0] * self.v_xy_delta_max 
-
-        # Eylem 1: Dönüş Hızı İvmesi (Delta)
-        # (self.yaw_delta_max_deg = 100 deg/s^2 * 0.1s = 10.0 deg/s her adımda)
-        delta_yaw_rate_deg = action[1] * self.yaw_delta_max_deg
-
-        # ----- 2. Yeni hedef hızları (v_xy_sp ve yaw_rate_sp) DELTA'larla hesapla -----
-        
-        # 2a. İleri Hız (v_xy)
         self.v_xy_sp = np.clip(
             self.prev_v_xy_sp + delta_v_xy,
-            self.v_xy_min,  # örn: 0.5
-            self.v_xy_max   # örn: 5.0
+            self.v_xy_min,
+            self.v_xy_max
         )
 
-        # 2b. Dönüş Hızı (yaw_rate) - YENİ "Yöntem B" MANTIĞI
-        self.yaw_rate_sp_deg = np.clip(
-            self.prev_yaw_rate_deg + delta_yaw_rate_deg,
-            -self.yaw_rate_max_deg,  # örn: -40.0
-            self.yaw_rate_max_deg   # örn: +40.0
-        )
+        # -------------------------------------------------------
+        # 3. Açısal Hız Kontrolü (DIRECT RATE CONTROL) - YENİ
+        # -------------------------------------------------------
+        # action[1] -> [-1, 1]
+        # cmd -> [-60, 60] deg/s (Hız komutu)
+        # Artık "prev_yaw" veya "modulo" hesabına GEREK YOK.
+        
+        self.yaw_rate_cmd_deg = action[1] * self.yaw_rate_max_deg * 1.1 #Offset var 
 
-        # ----- 3. 3D Navigasyon (varsa) -----
-        # (NOT: 3D için v_z'ye de delta kontrolü eklemeniz gerekecek)
+        # -------------------------------------------------------
+        # 4. 3D Navigasyon (Hazırlık)
+        # -------------------------------------------------------
         if self.navigation_3d:
-            # action[1] v_z, action[2] yaw_rate olur.
-            # v_z için delta kontrolü:
-            # delta_v_z = action[1] * self.v_z_delta_max # (Bunu __init__'te tanımlamanız gerekir)
-            # self.v_z_sp = np.clip(self.prev_v_z_sp + delta_v_z, self.v_z_min, self.v_z_max)
-            
-            # yaw_rate için delta kontrolü (action[2] kullanarak):
-            # delta_yaw_rate_deg = action[2] * self.yaw_delta_max_deg
-            # self.yaw_rate_sp_deg = np.clip(self.prev_yaw_rate_deg + delta_yaw_rate_deg, -self.yaw_rate_max_deg, self.yaw_rate_max_deg)
-            print("UYARI: 3D Navigasyon için 'set_action' metodunu güncellemeniz gerekiyor.")
-            # Şimdilik 3D'yi basitleştirelim:
-            self.v_z_sp = 0.0 # TODO: Düzelt
+            # Şimdilik 3D'yi pasif/sabit tutuyoruz
+            self.v_z_sp = 0.0 
         else:
-            # 2D navigasyon (kodun geri kalanı bunu varsayar)
             self.v_z_sp = 0.0
-            # yaw_rate_sp_deg zaten Adım 2b'de hesaplandı.
 
-        # ----- 4. "Çevirmen" için MEVCUT yönü oku -----
-        # (Eski Adım 4 ve 5'in yerini alır - ARTIK "yaw_sp" HESAPLAMIYORUZ)
-        self.yaw_rad = self.get_attitude()[2]  # Dronun GERÇEK yönü (radian)
-
-        # ----- 5. Gövde hız isteğini (v_xy_sp) Dünya (NED) hızlarına (vx, vy) çevir -----
-        # (AJANIN HIZ İSTEĞİ (2a) + DRONUN MEVCUT YÖNÜ (4) = SİMÜLATÖR KOMUTU)
+        # -------------------------------------------------------
+        # 5. Dünya Koordinatlarına Çevirim
+        # -------------------------------------------------------
+        # Gövde hızını (ileri git), o anki Yaw açısına göre Dünya (NED) hızına çevir
+        self.yaw_rad = self.get_attitude()[2]
         vx_world_sp = self.v_xy_sp * math.cos(self.yaw_rad)
         vy_world_sp = self.v_xy_sp * math.sin(self.yaw_rad)
 
-        # ----- 6. İki ayrı komutu (Hareket + Dönüş) uygula -----
-    
-
+        # -------------------------------------------------------
+        # 6. Komutu Uygula
+        # -------------------------------------------------------
+        
+        # 2D Modu
         if len(action) == 2:
             self.client.moveByVelocityZAsync(
-                vx_world_sp,  # Çevrilmiş Dünya Hızı X
-                vy_world_sp,  # Çevrilmiş Dünya Hızı Y 
-                -self.start_position[2], # Sabit irtifa
-                1,
+                vx_world_sp, 
+                vy_world_sp, 
+                -self.start_position[2], # Başlangıç irtifasında kal
+                self.dt,
                 drivetrain=airsim.DrivetrainType.MaxDegreeOfFreedom,
-                # (is_rate=True ve Yöntem B ile hesaplanan HEDEF HIZI kullan)
-                # (self.yaw_rate_sp_deg zaten derecedir, math.degrees() gerekmez)
-                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=self.yaw_rate_sp_deg)
+                # --- KRİTİK DEĞİŞİKLİK: RATE CONTROL ---
+                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=self.yaw_rate_cmd_deg)
             )
 
+        # 3D Modu
         elif len(action) == 3:
-            # (NOT: 3D için de moveByVelocityAsync'i aynı mantıkla güncellemelisiniz)
             self.client.moveByVelocityAsync(
                 vx_world_sp, 
                 vy_world_sp, 
-                -self.v_z_sp, # 3D için hesaplanan v_z
-                1,
+                -self.v_z_sp, 
+                self.dt,
                 drivetrain=airsim.DrivetrainType.MaxDegreeOfFreedom,
-                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=self.yaw_rate_sp_deg)
+                # --- KRİTİK DEĞİŞİKLİK: RATE CONTROL ---
+                yaw_mode=airsim.YawMode(is_rate=True, yaw_or_rate=self.yaw_rate_cmd_deg)
             )
 
+        # 7. Simülasyonu İlerlet
         self.client.simContinueForTime(self.dt)
 
-        # ----- 7. Bir sonraki adım için mevcut hızları "hafızaya" al -----
-        # (Yöntem B'nin çalışması için KRİTİK)
+        # -------------------------------------------------------
+        # 8. Hafızayı Güncelle
+        # -------------------------------------------------------
         self.prev_v_xy_sp = self.v_xy_sp
-        self.prev_yaw_rate_deg = self.yaw_rate_sp_deg
         
-        # 3D ise v_z'yi de hafızaya al
-        # if self.navigation_3d:
-        #     self.prev_v_z_sp = self.v_z_sp
+        # DİKKAT: self.prev_yaw_cmd_deg GÜNCELLEMESİ ARTIK YOK!
+        # Çünkü açı (angle) tutmuyoruz, anlık hız (rate) veriyoruz.
+        # self.prev_yaw_cmd_deg satırını silebilirsin.
 
     def update_goal_pose(self):
         # if goal is given by rectangular mode
@@ -330,7 +342,7 @@ class MultirotorDynamicsAirsim():
             relative_yaw), linear_velocity_xy, linear_velocity_z,  math.degrees(velocity[2])])
         state_norm = np.array([distance_norm, vertical_distance_norm, relative_yaw_norm,
                                linear_velocity_norm, linear_velocity_z_norm, angular_velocity_norm])
-        state_norm = np.clip(state_norm, 0, 1)
+        #state_norm = np.clip(state_norm, 0, 1)
         
         if self.navigation_3d:
             if self.using_velocity_state == False:
@@ -400,7 +412,7 @@ class MultirotorDynamicsAirsim():
         return airsim.to_eularian_angles(self.state_current_attitude)
 
     def get_attitude_cmd(self):
-        return [0.0, 0.0, self.prev_yaw_rate_deg]
+        return [0.0, 0.0, self.prev_yaw_cmd_deg]
 
     def get_distance_to_goal_2d(self):
         return math.sqrt(pow(self.get_position()[0] - self.goal_position[0], 2) + pow(self.get_position()[1] - self.goal_position[1], 2))

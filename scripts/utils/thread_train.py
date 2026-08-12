@@ -5,6 +5,7 @@ import gym_env
 import numpy as np
 from stable_baselines3 import TD3, PPO, SAC
 
+from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
@@ -21,6 +22,11 @@ import os
 import sys
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CURRENT_DIR))
+
+
+print("afasdfaf_thread")
+
+
 
 def with_permute(extractor_class):
     """
@@ -69,7 +75,7 @@ class SeedCycler(gym.Wrapper):
         return self.env.reset()
 
 def make_eval_env(cfg):
-     # 0) EVAL log klasörü
+    # 0) EVAL log klasörü
     eval_log_dir = cfg.get('EVAL','eval_log_dir') if cfg.has_option('EVAL','eval_log_dir') else './logs_eval'
     os.makedirs(eval_log_dir, exist_ok=True)
 
@@ -79,24 +85,27 @@ def make_eval_env(cfg):
     else:
         seeds = [101,202,303,404,505,606,707,808,909,1001]
 
-    # 2) Tekil env fabrikası (SeedCycler ile)
+    # 2) Tekil env fabrikası
     def _make_base():
         env = gym.make('airsim-env-v0')
         env.set_config(cfg)
         # SeedCycler ile her reset'te farklı seed kullan
         env = SeedCycler(env, seeds)
+        
+        # --- DÜZELTME BURADA ---
+        # VecMonitor yerine, Monitor'ü buraya, tekil ortam seviyesine koyuyoruz.
+        # Log dosyasını buraya veriyoruz.
+        log_file = os.path.join(eval_log_dir, 'eval_monitor.csv')
+        env = Monitor(env, filename=log_file)
         return env
 
-    # 3) Vektörleştir (train ile aynı tip olsun)
+    # 3) Vektörleştir (train ile aynı tip olsun: DummyVecEnv)
     venv = DummyVecEnv([_make_base])
 
-    # 4) VecMonitor: ep_reward/ep_len kaydı (ve SB3 eval ile uyum)
-    venv = VecMonitor(venv, filename=os.path.join(eval_log_dir, 'monitor_eval.csv'))
+    # 4) VecMonitor SATIRI SİLİNDİ veya YORUMA ALINDI
+    # venv = VecMonitor(venv, filename=os.path.join(eval_log_dir, 'monitor_eval.csv'))
 
-    # 5) Görüntü kanalları HWC ise (PyTorch CnnPolicy için) CHW’ye çevir
-    #venv = VecTransposeImage(venv)
-    
-    print("eval  obs space:", venv.observation_space)
+    print("eval obs space:", venv.observation_space)
 
     return venv
 
@@ -318,7 +327,7 @@ class TrainingThread(QtCore.QThread):
                 #target_entropy=-1,
                 ent_coef="auto",
                 seed=0,
-                verbose=2)
+                verbose=0)
 
             print("Actor betas:", model.actor.optimizer.defaults['betas'])
             print("Critic betas:", model.critic.optimizer.defaults['betas'])
@@ -426,7 +435,7 @@ class TrainingThread(QtCore.QThread):
         print('model saved to: {}'.format(model_path))
 
 
-    def main():
+def main():
 
         parser = get_parser()
         args = parser.parse_args()

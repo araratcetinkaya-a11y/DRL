@@ -1,9 +1,8 @@
 import sys
-import os
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+print("Kullanılan Python:", sys.executable)
 
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+import PyQt5
+print("PyQt5 bulundu:", PyQt5.__file__)
 
 
 import argparse
@@ -28,18 +27,19 @@ def get_parser():
 def main():
 
     # set evaluation model path  "C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_10_22_02_27_Multirotor_CNN_GAP_SAC"
-
-    eval_path = r"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_10_26_04_09_Multirotor_CNN_GAP_SAC"
+    #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_10_26_04_09_Multirotor_CNN_GAP_SAC"
+    #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_11_25_17_43_Multirotor_CNN_GAP_SAC"
+    eval_path = r"C:\Users\Studentenaccount\Desktop\Train logs\2025_10_26_04_09_Multirotor_CNN_GAP_SAC" 
 
     #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\logs\SimpleAvoid\2025_08_31_10_46_Multirotor_CNN_GAP_SAC"
 
     # select config file and model name
     config_file = eval_path + '/config/config.ini'
     # config_file = r"D:\OneDrive - mail.nwpu.edu.cn\Github\PhD-thesis-plot\CH3\3_1_simple_training_and_anaylysis\3_1_4_training_analysis_multi\data\2022_08_30_10_43_SimpleMultirotor_No_CNN_SAC\config\config.ini"
-    model_file = eval_path + '/best_model' #'/models/best_model'
+    model_file = eval_path + '/models/final_model' #'/models/best_model'
     # config_file = r"C:\Users\helei\Documents\GitHub\UAV_Navigation_DRL_AirSim\configs\config_new.ini"
     # model_file = eval_path + '/models/model_200000.zip'
-    total_eval_episodes = 50
+    total_eval_episodes = 200
 
     # 1. Create the qt thread (is MainThread in fact)
     app = QtWidgets.QApplication(sys.argv)
