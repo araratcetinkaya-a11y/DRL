@@ -35,8 +35,8 @@ No code was changed in this phase. Line numbers refer to this commit.
 | env_name | SimpleAvoid (start [0,0,3], goal 50 m, random heading, max 1000 steps) | `airsim_env.py` `set_config` |
 | dynamic_name | Multirotor -> `MultirotorDynamicsAirsim` | `dynamics/multirotor_airsim.py` |
 | perception | depth, 70x200, max_depth_meters 15 | `get_obs_image` |
-| state | 4 values (distance, relative yaw, v_xy, yaw rate) + 2 (last action) = 6, normalized to ~[0, 1] | `_get_state_feature` (L317) |
-| action | 2D delta control: [delta v_xy, delta yaw rate] in [-1, 1] | `set_action` (L175) |
+| state | 4 values (distance, relative yaw, v_xy, yaw rate) + 2 (last action) = 6, normalized to ~[0, 1] | `_get_state_feature` (L316) |
+| action | 2D, both in [-1, 1]: action[0] changes v_xy by up to 0.44 m/s per step (acc_xy_max 0.4 x 1.1), clipped to [0.5, 5] m/s; action[1] sets the yaw rate directly, up to +/-66 deg/s (yaw_rate_max_deg 60 x 1.1) | `set_action` (L174) |
 | dt | 0.1 s, lockstep via `simPause` + `simContinueForTime` | `set_action` |
 | reward | `reward_final` -> `compute_reward_final` (second definition, L901) | `airsim_env.py` |
 | algorithm | SAC, `CnnPolicy`, extractor `CNN_GAP_new` (L412) wrapped by `with_permute` (thread_train L31, L271) | `scripts/utils/thread_train.py` |
@@ -69,7 +69,7 @@ Q1 - why this cannot work as committed:
 - `with_permute` permutes (N, H, W, C) -> (N, C, H, W). Applied to an already channels-first
   batch, it produces the wrong layout.
 - Step 4 is fragile on its own: the clip on the state is commented out (`multirotor_airsim.py`
-  L345), so `distance_norm` can exceed 1. Then `obs.max() > 1`, the x255 is skipped, and the cast
+  L344), so `distance_norm` can exceed 1. Then `obs.max() > 1`, the x255 is skipped, and the cast
   to uint8 turns the depth channel into 0/1 values for that step.
 
 Most likely explanation: the final training used steps 1-3 only (float32, channels-last, matching
@@ -92,8 +92,8 @@ fix belongs on `thesis` via PR, tagged `thesis-final.1` (roadmap Phase -1).
 | `CNN_GAP_new.forward` | custom_policy_sb3 L467 | state read from `observations[:, 1, 0, :n]` |
 
 ## Import-time side effects and hardware dependencies
-- Debug prints at import: `multirotor_airsim.py` L6 (`print("afasdfaf")`), `thread_train.py` L27,
-  `start_evaluate_with_plot.py` L2 and L5.
+- Debug prints at import: `multirotor_airsim.py` L6 (`print("afasdfaf")`), `thread_train.py` L27
+  (both removed in Phase 1), `start_evaluate_with_plot.py` L2 and L5.
 - `airsim_env.py` imports `airsim`, `keyboard`, `msgpackrpc`, `torch`, `cv2`, `PyQt5` (L2-20).
   `AirsimGymEnv` inherits from both `gym.Env` and `QtCore.QThread`.
 - Dynamics classes create `airsim.MultirotorClient()` and call `confirmConnection()` in `__init__`.
