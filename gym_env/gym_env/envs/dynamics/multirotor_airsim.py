@@ -3,7 +3,6 @@ import numpy as np
 import math
 from gym import spaces
 
-print("afasdfaf")
 
 class MultirotorDynamicsAirsim():
     '''
