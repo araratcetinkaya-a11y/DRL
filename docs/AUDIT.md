@@ -9,15 +9,20 @@ No code was changed in this phase. Line numbers refer to this commit.
    environment is wrapped in `DummyVecEnv` (training, evaluation callback, `SAC.load(env=...)`).
    The thesis models were most likely trained before the uint8/transpose block in `get_obs` was
    added. Details and a simulator-free way to confirm it: see "Observation pipeline".
-2. The final training path uses `MultirotorDynamicsAirsim`, `compute_reward_final` (second
+2. **Q2 (confirmed by the author, Nov 9, 2026):** `thesis-final` contains a post-training
+   evaluation experiment: both actions are multiplied by 1.1 in `set_action` ("Offset var").
+   The models were trained with gain 1.0. Evaluating old models with the `thesis-final` code
+   therefore does not reproduce the training conditions. On `dev` the gain is now the config
+   parameter `action_gain` (default 1.0); see "Action gain (Q2)" below.
+3. The final training path uses `MultirotorDynamicsAirsim`, `compute_reward_final` (second
    definition), `CNN_GAP_new` wrapped by `with_permute`, and `SAC` with `CnnPolicy`.
-3. `features_dim` is not hard-coded in the extractor; it is `cnn_feature_num + state_feature_length`
+4. `features_dim` is not hard-coded in the extractor; it is `cnn_feature_num + state_feature_length`
    = 128 + 6 = 134. The CNN output (8 x 2 x 8 = 128) matches `cnn_feature_num = 128` only for
    70x200 input. (The roadmap's "132" came from the standalone test scripts.)
-4. Every module imports `airsim`, and `airsim_env.py` also imports `keyboard`, `PyQt5` and `torch`
+5. Every module imports `airsim`, and `airsim_env.py` also imports `keyboard`, `PyQt5` and `torch`
    at import time. The dynamics classes connect to AirSim in `__init__`. Nothing can be imported in
    CI without fakes for these.
-5. About 40% of the Python files are legacy or one-off experiment scripts (list below).
+6. About 40% of the Python files are legacy or one-off experiment scripts (list below).
 
 ## Environment
 | Item | Value | Source |
@@ -36,7 +41,7 @@ No code was changed in this phase. Line numbers refer to this commit.
 | dynamic_name | Multirotor -> `MultirotorDynamicsAirsim` | `dynamics/multirotor_airsim.py` |
 | perception | depth, 70x200, max_depth_meters 15 | `get_obs_image` |
 | state | 4 values (distance, relative yaw, v_xy, yaw rate) + 2 (last action) = 6, normalized to ~[0, 1] | `_get_state_feature` (L316) |
-| action | 2D, both in [-1, 1]: action[0] changes v_xy by up to 0.44 m/s per step (acc_xy_max 0.4 x 1.1), clipped to [0.5, 5] m/s; action[1] sets the yaw rate directly, up to +/-66 deg/s (yaw_rate_max_deg 60 x 1.1) | `set_action` (L174) |
+| action | 2D, both in [-1, 1]: action[0] changes v_xy by up to 0.4 m/s per step (acc_xy_max), clipped to [0.5, 5] m/s; action[1] sets the yaw rate directly, up to +/-60 deg/s (yaw_rate_max_deg). Training gain 1.0; `thesis-final` code uses 1.1 (Q2) | `set_action` (L174) |
 | dt | 0.1 s, lockstep via `simPause` + `simContinueForTime` | `set_action` |
 | reward | `reward_final` -> `compute_reward_final` (second definition, L901) | `airsim_env.py` |
 | algorithm | SAC, `CnnPolicy`, extractor `CNN_GAP_new` (L412) wrapped by `with_permute` (thread_train L31, L271) | `scripts/utils/thread_train.py` |
@@ -79,7 +84,20 @@ final training stored both channels as float32.
 How to confirm without the simulator (first characterization test in Phase 1): build the env with
 a fake AirSim client, call `reset()`, and check `env.observation_space.contains(obs)` and
 `obs.shape`. If Q1 is confirmed, evaluating old models needs the block at L511-523 removed. That
-fix belongs on `thesis` via PR, tagged `thesis-final.1` (roadmap Phase -1).
+fix belongs on `thesis` via PR, tagged `thesis-final.1` (roadmap Phase -1), together with the
+Q2 fix below.
+
+## Action gain (Q2)
+| Code | Gain | Speed change per step | Max yaw rate |
+| --- | --- | --- | --- |
+| Training of the thesis models | 1.0 | 0.4 m/s | 60 deg/s |
+| `thesis-final` tag (evaluation experiment) | 1.1, hard-coded | 0.44 m/s | 66 deg/s |
+| `dev` from Phase 1 (PR 1c) | config `action_gain`, default 1.0 | 0.4 m/s | 60 deg/s |
+
+To evaluate old models under training conditions with the frozen code, the two `* 1.1`
+factors in `set_action` must be removed. Like the Q1 fix, this belongs on `thesis` via PR,
+tagged `thesis-final.1`. To repeat the evaluation experiment on `dev`, set
+`action_gain = 1.1` in the [multirotor] section of the config.
 
 ## Places that use `obs` as an array
 | Place | Line | Assumption |
