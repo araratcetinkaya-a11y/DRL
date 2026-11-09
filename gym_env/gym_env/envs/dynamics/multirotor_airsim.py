@@ -3,6 +3,13 @@ import numpy as np
 import math
 from gym import spaces
 
+from gym_env.core.action_model import (
+    DEFAULT_ACTION_GAIN,
+    body_to_world_velocity,
+    next_speed_setpoint,
+    yaw_rate_command_deg,
+)
+
 
 class MultirotorDynamicsAirsim():
     '''
@@ -84,6 +91,8 @@ class MultirotorDynamicsAirsim():
         self.v_z_max = cfg.getfloat('multirotor', 'v_z_max')
         self.yaw_rate_max_deg = cfg.getfloat('multirotor', 'yaw_rate_max_deg')
         self.yaw_rate_max_rad = math.radians(self.yaw_rate_max_deg)
+        # 1.0 = training behavior; 1.1 = the post-training evaluation experiment (see action_model.py)
+        self.action_gain = cfg.getfloat('multirotor', 'action_gain', fallback=DEFAULT_ACTION_GAIN)
         self.yaw_accel_max_deg_s2 = 100.0  # Maksimum dönüş ivmesi (100 deg/s^2)
         self.yaw_delta_max_deg = 4
         self.v_xy_delta_max = self.acc_xy_max 
@@ -179,14 +188,11 @@ class MultirotorDynamicsAirsim():
         # -------------------------------------------------------
         # 2. Lineer Hız Kontrolü (DELTA / İVME BAZLI) - KORUNDU
         # -------------------------------------------------------
-        # action[0] -> [-1, 1]
-        # delta -> İvme * dt (Örn: 0.15 m/s artış)
-        delta_v_xy = action[0] * self.v_xy_delta_max * 1.1 #Offset var
-        
-        self.v_xy_sp = np.clip(
-            self.prev_v_xy_sp + delta_v_xy,
-            self.v_xy_min,
-            self.v_xy_max
+        # action[0] -> [-1, 1]; see gym_env/core/action_model.py
+        self.v_xy_sp = next_speed_setpoint(
+            self.prev_v_xy_sp, action[0],
+            self.v_xy_delta_max, self.v_xy_min, self.v_xy_max,
+            gain=self.action_gain,
         )
 
         # -------------------------------------------------------
@@ -196,7 +202,7 @@ class MultirotorDynamicsAirsim():
         # cmd -> [-60, 60] deg/s (Hız komutu)
         # Artık "prev_yaw" veya "modulo" hesabına GEREK YOK.
         
-        self.yaw_rate_cmd_deg = action[1] * self.yaw_rate_max_deg * 1.1 #Offset var 
+        self.yaw_rate_cmd_deg = yaw_rate_command_deg(action[1], self.yaw_rate_max_deg, gain=self.action_gain)
 
         # -------------------------------------------------------
         # 4. 3D Navigasyon (Hazırlık)
@@ -212,8 +218,7 @@ class MultirotorDynamicsAirsim():
         # -------------------------------------------------------
         # Gövde hızını (ileri git), o anki Yaw açısına göre Dünya (NED) hızına çevir
         self.yaw_rad = self.get_attitude()[2]
-        vx_world_sp = self.v_xy_sp * math.cos(self.yaw_rad)
-        vy_world_sp = self.v_xy_sp * math.sin(self.yaw_rad)
+        vx_world_sp, vy_world_sp = body_to_world_velocity(self.v_xy_sp, self.yaw_rad)
 
         # -------------------------------------------------------
         # 6. Komutu Uygula

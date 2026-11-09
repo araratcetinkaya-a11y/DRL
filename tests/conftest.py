@@ -34,16 +34,21 @@ def thesis_cfg():
     return cfg
 
 
-@pytest.fixture
-def env(thesis_cfg):
-    """The thesis environment, connected to the fake AirSim client.
+def build_env(cfg):
+    """Build the environment from a config, connected to the fake AirSim client.
 
     np.random is seeded because reset() draws the start heading and goal direction from it.
     """
     np.random.seed(0)
     environment = gym.make("airsim-env-v0")
-    environment.set_config(thesis_cfg)
+    environment.set_config(cfg)
     return environment
+
+
+@pytest.fixture
+def env(thesis_cfg):
+    """The thesis environment with the unchanged thesis config."""
+    return build_env(thesis_cfg)
 
 
 @pytest.fixture
