@@ -1,0 +1,9 @@
+# Lint settings. CI checks only the new code (tests/ and gym_env/gym_env/core/);
+# the thesis code is left as it is for now (see docs/AUDIT.md, "Dead, legacy or experiment code").
+target-version = "py39"
+line-length = 120
+extend-exclude = ["stable-baselines3"]
+
+[lint]
+# Default rule set: pyflakes (F) and the error-level pycodestyle rules (E4, E7, E9)
+select = ["E4", "E7", "E9", "F"]

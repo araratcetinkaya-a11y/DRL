@@ -1,0 +1,14 @@
+# Packages needed to run the tests in CI (Linux, CPU only, no AirSim).
+# Versions are the same as in requirements-thesis.txt, with two Linux-specific changes:
+# - torch is installed separately as the CPU build (see .github/workflows/ci.yml);
+# - opencv-contrib-python-headless replaces opencv-contrib-python (no GUI libraries on the runner).
+# airsim, keyboard and msgpackrpc are not needed: the tests replace them with fakes.
+numpy==1.26.4
+gym==0.19.0
+cloudpickle==1.6.0
+opencv-contrib-python-headless==4.10.0.84
+PyQt5==5.15.6
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.17.0
+pandas==2.3.1
+matplotlib==3.9.4
