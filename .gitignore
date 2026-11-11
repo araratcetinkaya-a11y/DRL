@@ -39,3 +39,7 @@ img_save/
 gym_env/gym_env/envs/lgmd/
 scripts/lgmd/
 gym_env/gym_env/envs/airsim_env copy.py
+# --- Test outputs ---
+.coverage
+coverage.xml
+htmlcov/
