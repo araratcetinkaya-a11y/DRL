@@ -77,9 +77,28 @@ Q1 - why this cannot work as committed:
   L344), so `distance_norm` can exceed 1. Then `obs.max() > 1`, the x255 is skipped, and the cast
   to uint8 turns the depth channel into 0/1 values for that step.
 
+- Step 4 also truncates instead of rounding (0.3333 x 255 = 84.99 -> 84), and negative state values
+  (the speed is -0.111 at standstill) wrap around when cast to uint8 (observed: 228).
+
 Most likely explanation: the final training used steps 1-3 only (float32, channels-last, matching
 `with_permute`), and the uint8/transpose block was added later. This matches the note that the
 final training stored both channels as float32.
+
+Working assumption (decided Nov 11, 2026): the thesis models were trained with the float32 path
+(steps 1-3). Evidence:
+- with the block, `DummyVecEnv` cannot even reset (test `test_dummy_vec_env_can_reset`), so no
+  training could have run with it;
+- commit 79739ba (Nov 19, 2025) declares a float32 `observation_space` and `get_obs` returns
+  `get_obs_image` unchanged; the block first appears in the bulk commit bd69467 (Aug 12, 2026);
+- comments in `get_obs_image` state that the uint8 cast was removed on purpose.
+How to confirm once a thesis model is available: SB3 stores the observation space in the model
+file. With the thesis venv:
+`python -c "import zipfile,json,base64,cloudpickle,sys; z=zipfile.ZipFile(sys.argv[1]); d=json.loads(z.read('data')); s=cloudpickle.loads(base64.b64decode(d['observation_space'][':serialized:'])); print(s.shape, s.dtype)" <model.zip>`
+Expected: `(70, 200, 2) float32`.
+
+Since Phase 1 (PR 1d), `get_obs_image` uses `gym_env/core/observation.py`; its output is covered by
+a characterization test recorded from the frozen code. `get_obs` (step 4-5) is unchanged and
+covered by the Q1 tests.
 
 How to confirm without the simulator (first characterization test in Phase 1): build the env with
 a fake AirSim client, call `reset()`, and check `env.observation_space.contains(obs)` and

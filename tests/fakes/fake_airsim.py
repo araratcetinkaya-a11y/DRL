@@ -4,10 +4,11 @@ It implements just the parts of the AirSim API that `gym_env` calls, with simple
 kinematics instead of a physics engine:
 - `moveByVelocityZAsync` stores the commanded world velocity and yaw rate;
 - `simContinueForTime(dt)` moves the vehicle with that velocity for `dt` seconds;
-- `simGetImages` returns a depth image filled with `client.depth_m` meters.
+- `simGetImages` returns a depth image filled with `client.depth_m` meters, or
+  `client.depth_map` (a full image in meters) when it is set.
 
-Tests can change `client.depth_m` or `client.has_collided` to create situations
-such as an obstacle in front of the drone or a crash.
+Tests can change `client.depth_m`, `client.depth_map` or `client.has_collided` to create
+situations such as an obstacle in front of the drone or a crash.
 """
 import math
 
@@ -122,10 +123,16 @@ class _Future:
 
 
 class _ImageResponse:
-    def __init__(self, width, height, depth_m):
+    def __init__(self, width, height, depth):
+        """`depth` is either one distance in meters for every pixel, or a (height, width) array."""
         self.width = width
         self.height = height
-        self.image_data_float = [float(depth_m)] * (width * height)
+        if np.isscalar(depth):
+            self.image_data_float = [float(depth)] * (width * height)
+        else:
+            depth = np.asarray(depth, dtype=np.float32)
+            assert depth.shape == (height, width), f"depth map must be {(height, width)}, got {depth.shape}"
+            self.image_data_float = depth.ravel().tolist()
         self.image_data_uint8 = b""
 
 
@@ -155,6 +162,7 @@ class MultirotorClient:
     def __init__(self, *args, **kwargs):
         self.calls = []
         self.depth_m = 10.0
+        self.depth_map = None  # optional (image_height, image_width) array in meters; overrides depth_m
         self.has_collided = False
         self.reset()
 
@@ -211,7 +219,8 @@ class MultirotorClient:
         return _CollisionInfo(self.has_collided)
 
     def simGetImages(self, requests, vehicle_name=""):
-        return [_ImageResponse(self.image_width, self.image_height, self.depth_m) for _ in requests]
+        depth = self.depth_map if self.depth_map is not None else self.depth_m
+        return [_ImageResponse(self.image_width, self.image_height, depth) for _ in requests]
 
     # --- motion
     def moveToZAsync(self, z, velocity, *args, **kwargs):

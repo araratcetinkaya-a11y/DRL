@@ -14,6 +14,7 @@ import cv2
 from .dynamics.multirotor_simple import MultirotorDynamicsSimple
 from .dynamics.multirotor_airsim import MultirotorDynamicsAirsim
 from .dynamics.fixedwing_simple import FixedwingDynamicsSimple
+from gym_env.core.observation import preprocess_depth, stack_depth_and_state
 # from .lgmd.LGMD import LGMD
 
 from PyQt5 import QtCore
@@ -525,58 +526,18 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
  
     def get_obs_image(self):
-        # Normal mode: get depth image then transfer to matrix with state
-        
-        # 1. Adım: Artık YÜKSEK HASSASİYETLİ (float32) ham metre verisi alıyoruz
-        #          (Bir önceki adımda 'get_depth_image' fonksiyonunu düzelttik)
-        image_meters = self.get_depth_image() 
-        
-        image_resize = cv2.resize(image_meters, (self.screen_width,
-                                                self.screen_height))
-        
-        # min() alırken ham metre verisini kullanmak daha doğrudur
-        self.min_distance_to_obstacles = image_resize.min() 
+        """Depth image + state -> observation (H, W, 2), float32 (the path used in training).
 
-        # 2. DEĞİŞİKLİK: Veriyi [0.0, 1.0] float aralığına normalize et.
-        #    Eski kod: ... / self.max_depth_meters * 255
-        #    ' * 255 ' YANLIŞTI ve SİLİNDİ. 
-        #    Amacımız [0, 255] değil, [0.0, 1.0] elde etmek.
-        image_normalized = np.clip(
-            image_resize, 0, self.max_depth_meters) / self.max_depth_meters
+        Preprocessing and stacking live in gym_env/core/observation.py:
+        depth in meters -> resize -> clip to max_depth_meters -> normalize -> invert (near = 1),
+        state in row 0 of the second channel. No uint8 cast here (see docs/AUDIT.md, Q1).
+        """
+        image_meters = self.get_depth_image()
+        image_processed, self.min_distance_to_obstacles = preprocess_depth(
+            image_meters, self.screen_height, self.screen_width, self.max_depth_meters)
 
-        # 3. DEĞİŞİKLİK: Veriyi [0.0, 1.0] aralığında ters çevir (Invert).
-        #    Eski kod: image_scaled = 255 - image_scaled
-        #    Bu, float veride '1.0 - image_normalized' işleminin karşılığıdır.
-        #    Böylece (yakın = 1.0) ve (uzak = 0.0) olur.
-        image_processed = 1.0 - image_normalized
-
-        # 4. DEĞİŞİKLİK (EN KRİTİK HATA):
-        #    image_uint8 = image_scaled.astype(np.uint8) SATIRI TAMAMEN SİLİNDİ.
-        #    Veri kaybının (hassasiyet kaybı) ve matematiksel hatanın 
-        #    kaynağı bu satırdı. Veri float32 olarak kalmalıdır.
-
-        # 2. get current state (relative_pose, velocity)
-        # 5. DEĞİŞİKLİK: state_feature_array'in de float olmasını sağlıyoruz.
-        state_feature_array = np.zeros((self.screen_height, self.screen_width), 
-                                    dtype=np.float32) # Dtype eklendi
-        
         state_feature = self.dynamic_model._get_state_feature()
-        state_feature_array[0, 0:self.state_feature_length] = state_feature
-
-        # 3. generate image with state
-        # 6. DEĞİŞİKLİK: Artık 'image_uint8' yerine 'image_processed' (float)
-        #    kullanarak birleştiriyoruz.
-        image_with_state = np.array([image_processed.astype(np.float32), 
-                                    state_feature_array.astype(np.float32)])
-        
-        # Bu eksen değiştirme işlemleri (swapaxes) DRL için yaygındır,
-        # (H, W, C) formatına getirir. Aynen kalıyor.
-        image_with_state = image_with_state.swapaxes(0, 2)
-        image_with_state = image_with_state.swapaxes(0, 1)
-
-        # Bu 'return' artık (H, W, 2) şeklinde ve np.float32 tipinde
-        # bir 'observation' (gözlem) döndürür.
-        return image_with_state
+        return stack_depth_and_state(image_processed, state_feature)
 
     def get_depth_gray_image(self):
         # get depth and rgb image
