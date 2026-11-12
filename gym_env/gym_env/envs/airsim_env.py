@@ -15,6 +15,13 @@ from .dynamics.multirotor_simple import MultirotorDynamicsSimple
 from .dynamics.multirotor_airsim import MultirotorDynamicsAirsim
 from .dynamics.fixedwing_simple import FixedwingDynamicsSimple
 from gym_env.core.observation import preprocess_depth, stack_depth_and_state
+from gym_env.core.reward import (
+    distance_progress_reward,
+    jerk_penalty,
+    obstacle_penalty,
+    speed_near_obstacle_penalty,
+    terminal_reward,
+)
 # from .lgmd.LGMD import LGMD
 
 from PyQt5 import QtCore
@@ -861,82 +868,36 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         '''
     def compute_reward_final(self, done, action, return_terms=False):
 
-        reward = 0.0  # Toplam ödül
+        # Reward terms live in gym_env/core/reward.py (logic unchanged)
+        distance_reward_coef = 500 if self.env_name == 'NH_center' else 40
 
-        # --- Terminal ödüller ---
-        reward_reach = 30
-        reward_crash = -25
-        reward_outside = -10
-
-        # Ortam katsayısı
-        if self.env_name == 'NH_center':
-            distance_reward_coef = 500
-        else:
-            distance_reward_coef = 40
-
-        # ======================================================================
-        # 1. SHAPING ÖDÜLLERİ (HER ADIMDA)
-        # ======================================================================
-
-        # --- Hedefe yaklaşma (PBRS) ---
+        # 1. Shaping terms (every step)
         distance_now = self.get_distance_to_goal_3d()
         d_prev = self.previous_distance_from_des_point
         d_delta = d_prev - distance_now
-
-        # goal_distance ile normalize edilmiş shaping
-        reward_distance = distance_reward_coef * d_delta / self.dynamic_model.goal_distance
+        reward_distance = distance_progress_reward(
+            d_prev, distance_now, self.dynamic_model.goal_distance, coef=distance_reward_coef)
         self.previous_distance_from_des_point = distance_now
 
-        current_pose = self.dynamic_model.get_position()
-        goal_pose = self.dynamic_model.goal_position
-       
-
-        reward += reward_distance
-
-        # --- Kısıtlar / cezalar ---
-
-        # KISIT 1: Engeller (kuadratik ceza, SAFE_DISTANCE içi)
-        punishment_obs = 0.0
         dist_to_obs = self.min_distance_to_obstacles
-        if dist_to_obs < self.SAFE_DISTANCE:
-            distance_inside_bubble = self.SAFE_DISTANCE - dist_to_obs
-            punishment_obs = self.k_obs_penalty * (distance_inside_bubble ** 2)
-
         v_xy_real = self.dynamic_model.get_velocity()[0]
+        punishment_obs = obstacle_penalty(dist_to_obs, self.SAFE_DISTANCE, self.k_obs_penalty)
+        punishment_speed_near_obs = speed_near_obstacle_penalty(
+            dist_to_obs, v_xy_real, self.SAFE_DISTANCE, self.max_safe_speed_near_obs, self.k_speed_near_obs)
+        punishment_jerk_fwd = jerk_penalty(action[0], self.last_action[0], self.k_jerk_fwd)
+        punishment_jerk_yaw = jerk_penalty(action[1], self.last_action[1], self.k_jerk_yaw)
 
-        # KISIT 2: Engellere yakınken yüksek hızda gitme (gerçek hız üzerinden)
-        punishment_speed_near_obs = 0.0
-        if dist_to_obs < self.SAFE_DISTANCE:
-            if v_xy_real > self.max_safe_speed_near_obs:
-            # Engellere yakınken "güvenli hız" eşiği
-                overspeed = v_xy_real - self.max_safe_speed_near_obs
-                punishment_speed_near_obs = self.k_speed_near_obs * (overspeed ** 2)
-
-        # KISIT 3: Sarsıntı (Jerk) – aksiyon farkları
-        action_jerk_fwd = action[0] - self.last_action[0]
-        action_jerk_yaw = action[1] - self.last_action[1]  # artık yaw açısı komutunun jerk'i
-
-        punishment_jerk_fwd = self.k_jerk_fwd * (action_jerk_fwd ** 2)
-        punishment_jerk_yaw = self.k_jerk_yaw * (action_jerk_yaw ** 2)
-
-        # --- Tüm shaping cezalarını ekle ---
+        reward = 0.0
+        reward += reward_distance
         reward -= punishment_obs
         reward -= punishment_speed_near_obs
         reward -= punishment_jerk_fwd
         reward -= punishment_jerk_yaw
 
-        # ======================================================================
-        # 2. TERMINAL ÖDÜLLER (SADECE done=True İKEN)
-        # ======================================================================
-
+        # 2. Terminal reward (only when done=True; nothing for a time-limit end)
         if done:
-            if self.is_in_desired_pose():
-                reward += reward_reach
-            elif self.is_crashed():
-                reward += reward_crash
-            elif self.is_not_inside_workspace():
-                reward += reward_outside
-            # TimeLimit sonlanmalarında ekstra ödül yok; sadece shaping ile yetinir.
+            reward += terminal_reward(
+                self.is_in_desired_pose(), self.is_crashed(), self.is_not_inside_workspace())
 
         # ======================================================================
         # 3. LOG SÖZLÜKLERİ
