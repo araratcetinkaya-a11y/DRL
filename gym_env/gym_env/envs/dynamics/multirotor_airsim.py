@@ -9,6 +9,14 @@ from gym_env.core.action_model import (
     next_speed_setpoint,
     yaw_rate_command_deg,
 )
+from gym_env.core.observation import (
+    normalize_angle,
+    normalize_distance,
+    normalize_last_action,
+    normalize_speed,
+    normalize_symmetric,
+    wrap_to_pi,
+)
 
 
 class MultirotorDynamicsAirsim():
@@ -329,18 +337,18 @@ class MultirotorDynamicsAirsim():
         distance = self.get_distance_to_goal_2d()
         relative_yaw = self._get_relative_yaw()  # return relative yaw -pi to pi 
         relative_pose_z = self.get_position()[2] - self.goal_position[2]  # current position z is positive
-        vertical_distance_norm = (relative_pose_z / self.max_vertical_difference / 2 + 0.5) 
+        vertical_distance_norm = normalize_symmetric(relative_pose_z, self.max_vertical_difference)
 
-        distance_norm = distance / self.goal_distance 
-        relative_yaw_norm = (relative_yaw / math.pi / 2 + 0.5) 
+        distance_norm = normalize_distance(distance, self.goal_distance)
+        relative_yaw_norm = normalize_angle(relative_yaw)
 
         # current speed and angular speed
         velocity = self.get_velocity()
         linear_velocity_xy = velocity[0]
-        linear_velocity_norm = (linear_velocity_xy - self.v_xy_min) / (self.v_xy_max - self.v_xy_min) 
+        linear_velocity_norm = normalize_speed(linear_velocity_xy, self.v_xy_min, self.v_xy_max)
         linear_velocity_z = velocity[1]
-        linear_velocity_z_norm = (linear_velocity_z / self.v_z_max / 2 + 0.5) 
-        angular_velocity_norm = (velocity[2] / self.yaw_rate_max_rad / 2 + 0.5) 
+        linear_velocity_z_norm = normalize_symmetric(linear_velocity_z, self.v_z_max)
+        angular_velocity_norm = normalize_symmetric(velocity[2], self.yaw_rate_max_rad)
         # state: distance_h, distance_v, relative yaw, velocity_x, velocity_z, velocity_yaw
         self.state_raw = np.array([distance, relative_pose_z,  math.degrees(
             relative_yaw), linear_velocity_xy, linear_velocity_z,  math.degrees(velocity[2])])
@@ -361,7 +369,7 @@ class MultirotorDynamicsAirsim():
         # --- YENİ (GÖREV B): 'last_action'ı normalize et ve state'e ekle ---
         # self.last_action, [-1, 1] aralığındadır (Adım B3'te ayarlandı).
         # state_norm, [0, 1] aralığındadır. Normalize et.
-        last_action_norm = (self.last_action + 1.0) / 2.0  # [-1, 1] -> [0, 2] -> [0, 1]
+        last_action_norm = normalize_last_action(self.last_action)  # [-1, 1] -> [0, 1]
         
         # state_norm'u (2, 3, 4, 6, vb. elemanlı olabilir) 
         # ve last_action_norm'u (2 veya 3 elemanlı) birleştir.
@@ -387,14 +395,8 @@ class MultirotorDynamicsAirsim():
         # get current yaw
         yaw_current = self.get_attitude()[2]
 
-        # get yaw error
-        yaw_error = angle - yaw_current
-        if yaw_error > math.pi:
-            yaw_error -= 2*math.pi
-        elif yaw_error < -math.pi:
-            yaw_error += 2*math.pi
-
-        return yaw_error
+        # get yaw error, wrapped to [-pi, pi]
+        return wrap_to_pi(angle - yaw_current)
 
     def get_position(self):
         position = self.client.simGetVehiclePose().position 

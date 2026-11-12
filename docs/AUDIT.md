@@ -14,15 +14,19 @@ No code was changed in this phase. Line numbers refer to this commit.
    The models were trained with gain 1.0. Evaluating old models with the `thesis-final` code
    therefore does not reproduce the training conditions. On `dev` the gain is now the config
    parameter `action_gain` (default 1.0); see "Action gain (Q2)" below.
-3. The final training path uses `MultirotorDynamicsAirsim`, `compute_reward_final` (second
+3. **Q3 (report only, Nov 12, 2026):** with the thesis config `crash_distance = 2` and
+   `SAFE_DISTANCE = 2` (hard-coded), the obstacle penalty and the speed-near-obstacle penalty can only
+   be non-zero in the step in which the drone crashes. In practice they make the crash penalty larger
+   for fast crashes: -25 - 50 * (v - 3.5)^2 - 0.5 * (2 - d)^2. See "Reward (Q3)" below.
+4. The final training path uses `MultirotorDynamicsAirsim`, `compute_reward_final` (second
    definition), `CNN_GAP_new` wrapped by `with_permute`, and `SAC` with `CnnPolicy`.
-4. `features_dim` is not hard-coded in the extractor; it is `cnn_feature_num + state_feature_length`
+5. `features_dim` is not hard-coded in the extractor; it is `cnn_feature_num + state_feature_length`
    = 128 + 6 = 134. The CNN output (8 x 2 x 8 = 128) matches `cnn_feature_num = 128` only for
    70x200 input. (The roadmap's "132" came from the standalone test scripts.)
-5. Every module imports `airsim`, and `airsim_env.py` also imports `keyboard`, `PyQt5` and `torch`
+6. Every module imports `airsim`, and `airsim_env.py` also imports `keyboard`, `PyQt5` and `torch`
    at import time. The dynamics classes connect to AirSim in `__init__`. Nothing can be imported in
    CI without fakes for these.
-6. About 40% of the Python files are legacy or one-off experiment scripts (list below).
+7. About 40% of the Python files are legacy or one-off experiment scripts (list below).
 
 ## Environment
 | Item | Value | Source |
@@ -77,9 +81,28 @@ Q1 - why this cannot work as committed:
   L344), so `distance_norm` can exceed 1. Then `obs.max() > 1`, the x255 is skipped, and the cast
   to uint8 turns the depth channel into 0/1 values for that step.
 
+- Step 4 also truncates instead of rounding (0.3333 x 255 = 84.99 -> 84), and negative state values
+  (the speed is -0.111 at standstill) wrap around when cast to uint8 (observed: 228).
+
 Most likely explanation: the final training used steps 1-3 only (float32, channels-last, matching
 `with_permute`), and the uint8/transpose block was added later. This matches the note that the
 final training stored both channels as float32.
+
+Working assumption (decided Nov 11, 2026): the thesis models were trained with the float32 path
+(steps 1-3). Evidence:
+- with the block, `DummyVecEnv` cannot even reset (test `test_dummy_vec_env_can_reset`), so no
+  training could have run with it;
+- commit 79739ba (Nov 19, 2025) declares a float32 `observation_space` and `get_obs` returns
+  `get_obs_image` unchanged; the block first appears in the bulk commit bd69467 (Aug 12, 2026);
+- comments in `get_obs_image` state that the uint8 cast was removed on purpose.
+How to confirm once a thesis model is available: SB3 stores the observation space in the model
+file. With the thesis venv:
+`python -c "import zipfile,json,base64,cloudpickle,sys; z=zipfile.ZipFile(sys.argv[1]); d=json.loads(z.read('data')); s=cloudpickle.loads(base64.b64decode(d['observation_space'][':serialized:'])); print(s.shape, s.dtype)" <model.zip>`
+Expected: `(70, 200, 2) float32`.
+
+Since Phase 1 (PR 1d), `get_obs_image` uses `gym_env/core/observation.py`; its output is covered by
+a characterization test recorded from the frozen code. `get_obs` (step 4-5) is unchanged and
+covered by the Q1 tests.
 
 How to confirm without the simulator (first characterization test in Phase 1): build the env with
 a fake AirSim client, call `reset()`, and check `env.observation_space.contains(obs)` and
@@ -98,6 +121,26 @@ To evaluate old models under training conditions with the frozen code, the two `
 factors in `set_action` must be removed. Like the Q1 fix, this belongs on `thesis` via PR,
 tagged `thesis-final.1`. To repeat the evaluation experiment on `dev`, set
 `action_gain = 1.1` in the [multirotor] section of the config.
+
+## Reward (Q3)
+Active function: second definition of `compute_reward_final` in `airsim_env.py`. Since Phase 1
+(PR 1e) its terms come from `gym_env/core/reward.py`; values are covered by a characterization test
+recorded from the frozen code.
+
+| Term | Formula (thesis values) | Active when |
+| --- | --- | --- |
+| distance progress | 40 * (d_prev - d_now) / 50 | every step |
+| obstacle penalty | 0.5 * (2 - d_obs)^2 | d_obs < 2 m |
+| speed near obstacle | 50 * (v_xy - 3.5)^2 | d_obs < 2 m and v_xy > 3.5 m/s |
+| forward jerk | 0.025 * (a0 - a0_prev)^2 | every step |
+| yaw jerk | 0.03 * (a1 - a1_prev)^2 | every step |
+| terminal | reach +30, crash -25, outside -10 (in this order) | done |
+
+`is_crashed` is true when `min_distance_to_obstacles < crash_distance` (2 m). The bubble condition
+`d_obs < SAFE_DISTANCE` (2 m) is the same condition, so both obstacle penalties are only applied in
+the crash step (or never, if the crash is detected by `has_collided` at a larger distance). Whether
+SAFE_DISTANCE had another value in the thesis experiments should be checked against the thesis text
+and the saved run configs. No change was made.
 
 ## Places that use `obs` as an array
 | Place | Line | Assumption |

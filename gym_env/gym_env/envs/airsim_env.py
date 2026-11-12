@@ -14,6 +14,14 @@ import cv2
 from .dynamics.multirotor_simple import MultirotorDynamicsSimple
 from .dynamics.multirotor_airsim import MultirotorDynamicsAirsim
 from .dynamics.fixedwing_simple import FixedwingDynamicsSimple
+from gym_env.core.observation import preprocess_depth, stack_depth_and_state
+from gym_env.core.reward import (
+    distance_progress_reward,
+    jerk_penalty,
+    obstacle_penalty,
+    speed_near_obstacle_penalty,
+    terminal_reward,
+)
 # from .lgmd.LGMD import LGMD
 
 from PyQt5 import QtCore
@@ -525,58 +533,18 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
  
     def get_obs_image(self):
-        # Normal mode: get depth image then transfer to matrix with state
-        
-        # 1. Adım: Artık YÜKSEK HASSASİYETLİ (float32) ham metre verisi alıyoruz
-        #          (Bir önceki adımda 'get_depth_image' fonksiyonunu düzelttik)
-        image_meters = self.get_depth_image() 
-        
-        image_resize = cv2.resize(image_meters, (self.screen_width,
-                                                self.screen_height))
-        
-        # min() alırken ham metre verisini kullanmak daha doğrudur
-        self.min_distance_to_obstacles = image_resize.min() 
+        """Depth image + state -> observation (H, W, 2), float32 (the path used in training).
 
-        # 2. DEĞİŞİKLİK: Veriyi [0.0, 1.0] float aralığına normalize et.
-        #    Eski kod: ... / self.max_depth_meters * 255
-        #    ' * 255 ' YANLIŞTI ve SİLİNDİ. 
-        #    Amacımız [0, 255] değil, [0.0, 1.0] elde etmek.
-        image_normalized = np.clip(
-            image_resize, 0, self.max_depth_meters) / self.max_depth_meters
+        Preprocessing and stacking live in gym_env/core/observation.py:
+        depth in meters -> resize -> clip to max_depth_meters -> normalize -> invert (near = 1),
+        state in row 0 of the second channel. No uint8 cast here (see docs/AUDIT.md, Q1).
+        """
+        image_meters = self.get_depth_image()
+        image_processed, self.min_distance_to_obstacles = preprocess_depth(
+            image_meters, self.screen_height, self.screen_width, self.max_depth_meters)
 
-        # 3. DEĞİŞİKLİK: Veriyi [0.0, 1.0] aralığında ters çevir (Invert).
-        #    Eski kod: image_scaled = 255 - image_scaled
-        #    Bu, float veride '1.0 - image_normalized' işleminin karşılığıdır.
-        #    Böylece (yakın = 1.0) ve (uzak = 0.0) olur.
-        image_processed = 1.0 - image_normalized
-
-        # 4. DEĞİŞİKLİK (EN KRİTİK HATA):
-        #    image_uint8 = image_scaled.astype(np.uint8) SATIRI TAMAMEN SİLİNDİ.
-        #    Veri kaybının (hassasiyet kaybı) ve matematiksel hatanın 
-        #    kaynağı bu satırdı. Veri float32 olarak kalmalıdır.
-
-        # 2. get current state (relative_pose, velocity)
-        # 5. DEĞİŞİKLİK: state_feature_array'in de float olmasını sağlıyoruz.
-        state_feature_array = np.zeros((self.screen_height, self.screen_width), 
-                                    dtype=np.float32) # Dtype eklendi
-        
         state_feature = self.dynamic_model._get_state_feature()
-        state_feature_array[0, 0:self.state_feature_length] = state_feature
-
-        # 3. generate image with state
-        # 6. DEĞİŞİKLİK: Artık 'image_uint8' yerine 'image_processed' (float)
-        #    kullanarak birleştiriyoruz.
-        image_with_state = np.array([image_processed.astype(np.float32), 
-                                    state_feature_array.astype(np.float32)])
-        
-        # Bu eksen değiştirme işlemleri (swapaxes) DRL için yaygındır,
-        # (H, W, C) formatına getirir. Aynen kalıyor.
-        image_with_state = image_with_state.swapaxes(0, 2)
-        image_with_state = image_with_state.swapaxes(0, 1)
-
-        # Bu 'return' artık (H, W, 2) şeklinde ve np.float32 tipinde
-        # bir 'observation' (gözlem) döndürür.
-        return image_with_state
+        return stack_depth_and_state(image_processed, state_feature)
 
     def get_depth_gray_image(self):
         # get depth and rgb image
@@ -900,82 +868,36 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         '''
     def compute_reward_final(self, done, action, return_terms=False):
 
-        reward = 0.0  # Toplam ödül
+        # Reward terms live in gym_env/core/reward.py (logic unchanged)
+        distance_reward_coef = 500 if self.env_name == 'NH_center' else 40
 
-        # --- Terminal ödüller ---
-        reward_reach = 30
-        reward_crash = -25
-        reward_outside = -10
-
-        # Ortam katsayısı
-        if self.env_name == 'NH_center':
-            distance_reward_coef = 500
-        else:
-            distance_reward_coef = 40
-
-        # ======================================================================
-        # 1. SHAPING ÖDÜLLERİ (HER ADIMDA)
-        # ======================================================================
-
-        # --- Hedefe yaklaşma (PBRS) ---
+        # 1. Shaping terms (every step)
         distance_now = self.get_distance_to_goal_3d()
         d_prev = self.previous_distance_from_des_point
         d_delta = d_prev - distance_now
-
-        # goal_distance ile normalize edilmiş shaping
-        reward_distance = distance_reward_coef * d_delta / self.dynamic_model.goal_distance
+        reward_distance = distance_progress_reward(
+            d_prev, distance_now, self.dynamic_model.goal_distance, coef=distance_reward_coef)
         self.previous_distance_from_des_point = distance_now
 
-        current_pose = self.dynamic_model.get_position()
-        goal_pose = self.dynamic_model.goal_position
-       
-
-        reward += reward_distance
-
-        # --- Kısıtlar / cezalar ---
-
-        # KISIT 1: Engeller (kuadratik ceza, SAFE_DISTANCE içi)
-        punishment_obs = 0.0
         dist_to_obs = self.min_distance_to_obstacles
-        if dist_to_obs < self.SAFE_DISTANCE:
-            distance_inside_bubble = self.SAFE_DISTANCE - dist_to_obs
-            punishment_obs = self.k_obs_penalty * (distance_inside_bubble ** 2)
-
         v_xy_real = self.dynamic_model.get_velocity()[0]
+        punishment_obs = obstacle_penalty(dist_to_obs, self.SAFE_DISTANCE, self.k_obs_penalty)
+        punishment_speed_near_obs = speed_near_obstacle_penalty(
+            dist_to_obs, v_xy_real, self.SAFE_DISTANCE, self.max_safe_speed_near_obs, self.k_speed_near_obs)
+        punishment_jerk_fwd = jerk_penalty(action[0], self.last_action[0], self.k_jerk_fwd)
+        punishment_jerk_yaw = jerk_penalty(action[1], self.last_action[1], self.k_jerk_yaw)
 
-        # KISIT 2: Engellere yakınken yüksek hızda gitme (gerçek hız üzerinden)
-        punishment_speed_near_obs = 0.0
-        if dist_to_obs < self.SAFE_DISTANCE:
-            if v_xy_real > self.max_safe_speed_near_obs:
-            # Engellere yakınken "güvenli hız" eşiği
-                overspeed = v_xy_real - self.max_safe_speed_near_obs
-                punishment_speed_near_obs = self.k_speed_near_obs * (overspeed ** 2)
-
-        # KISIT 3: Sarsıntı (Jerk) – aksiyon farkları
-        action_jerk_fwd = action[0] - self.last_action[0]
-        action_jerk_yaw = action[1] - self.last_action[1]  # artık yaw açısı komutunun jerk'i
-
-        punishment_jerk_fwd = self.k_jerk_fwd * (action_jerk_fwd ** 2)
-        punishment_jerk_yaw = self.k_jerk_yaw * (action_jerk_yaw ** 2)
-
-        # --- Tüm shaping cezalarını ekle ---
+        reward = 0.0
+        reward += reward_distance
         reward -= punishment_obs
         reward -= punishment_speed_near_obs
         reward -= punishment_jerk_fwd
         reward -= punishment_jerk_yaw
 
-        # ======================================================================
-        # 2. TERMINAL ÖDÜLLER (SADECE done=True İKEN)
-        # ======================================================================
-
+        # 2. Terminal reward (only when done=True; nothing for a time-limit end)
         if done:
-            if self.is_in_desired_pose():
-                reward += reward_reach
-            elif self.is_crashed():
-                reward += reward_crash
-            elif self.is_not_inside_workspace():
-                reward += reward_outside
-            # TimeLimit sonlanmalarında ekstra ödül yok; sadece shaping ile yetinir.
+            reward += terminal_reward(
+                self.is_in_desired_pose(), self.is_crashed(), self.is_not_inside_workspace())
 
         # ======================================================================
         # 3. LOG SÖZLÜKLERİ

@@ -43,3 +43,28 @@ def test_dummy_vec_env_can_reset(thesis_cfg):
 
     np.random.seed(0)
     DummyVecEnv([make_env]).reset()
+
+
+# Depth pixel at 10 m after get_obs: 0.3333 * 255 = 84.99, and the uint8 cast truncates instead of
+# rounding, so the value is 84 (not 85).
+DEPTH_AT_10M = 84
+
+
+def test_get_obs_scales_depth_to_255_when_state_is_in_range(env, client):
+    """Characterization: right after reset all state values are <= 1, so get_obs scales by 255."""
+    client.depth_m = 10.0
+    env.reset()
+    obs = env.unwrapped.get_obs()
+    assert np.all(obs[0] == DEPTH_AT_10M)
+
+
+@pytest.mark.xfail(
+    reason=Q1 + "; get_obs scales by 255 only if obs.max() <= 1, so a state value above 1 turns the depth into 0",
+    strict=True,
+)
+def test_get_obs_keeps_depth_when_a_state_value_is_above_one(env, client):
+    client.depth_m = 10.0
+    env.reset()
+    env.unwrapped.dynamic_model.goal_distance = 10.0  # 50 m away from a 10 m goal distance -> distance_norm = 5
+    obs = env.unwrapped.get_obs()
+    assert np.all(obs[0] == DEPTH_AT_10M)
