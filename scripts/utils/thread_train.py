@@ -1,4 +1,5 @@
 from .custom_policy_sb3 import CNN_FC, CNN_GAP, CNN_GAP_BN, No_CNN, CNN_MobileNet, CNN_GAP_new
+from .replay_buffer_report import log_replay_buffer_memory
 import datetime
 import gym
 import gym_env
@@ -26,52 +27,6 @@ sys.path.append(os.path.dirname(CURRENT_DIR))
 
 
 
-
-def with_permute(extractor_class):
-    """
-    Bu fonksiyon, SB3'ün 'features_extractor_class' girdisi olarak
-    verilen bir sınıfı alır ve o sınıfı 'sarmalar'.
-    Oluşturulan yeni sınıf, 'forward' metodu çağrıldığında
-    otomatik olarak (H, W, C) -> (C, H, W) eksen değişimini
-    (permute) yapar ve sonucu orijinal sınıfın 'forward'
-    metoduna gönderir.
-    
-    Bu, VecTransposeImage'in float32 veriler için yaptığı işin aynısıdır.
-    """
-    class PermutedExtractor(extractor_class):
-        def forward(self, observations: th.Tensor) -> th.Tensor:
-            # Gözlem (N, H, W, C) formatında gelir
-            # Biz onu (N, C, H, W) formatına çeviririz
-            # --- EKLENEN KONTROL PRINT'LERİ ---
-            if not hasattr(self, '_printed_shapes'):
-                print(f"\n[WRAPPER KONTROLÜ] GİRİŞ shape: {observations.shape}")
-                observations_permuted = observations.permute(0, 3, 1, 2)
-                print(f"[WRAPPER KONTROLÜ] ÇIKIŞ shape (permute sonrası): {observations_permuted.shape}\n")
-                self._printed_shapes = True
-            else:
-                observations_permuted = observations.permute(0, 3, 1, 2)
-            # --- KONTROL SONU ---
-            
-            # (N, C, H, W) formatındaki tensörü,
-            # orijinal sınıfın (örn: CNN_GAP_new) 'forward' metoduna yollarız
-            return super().forward(observations_permuted)
-            
-    return PermutedExtractor
-
-class SeedCycler(gym.Wrapper):
-    def __init__(self, env, seeds):
-        super().__init__(env)
-        self._seeds = itertools.cycle(seeds)
-
-    def reset(self):
-        # gym==0.19: seed, reset'e parametre olarak verilmez;
-        # env.seed(...) + env.reset() kullanılır
-        seed = next(self._seeds)
-        if hasattr(self.env, "seed"):
-            self.env.seed(seed)
-        if hasattr(self.env.action_space, "seed"):
-            self.env.action_space.seed(seed)
-        return self.env.reset()
 
 def make_eval_env(cfg):
     # 0) EVAL log klasörü
@@ -252,7 +207,12 @@ class TrainingThread(QtCore.QThread):
             policy_base = 'MlpPolicy'
             policy_kwargs = dict(activation_fn=activation_function)
         else:
-            policy_base = 'CnnPolicy'
+            # Dict observation (Phase 3): SB3 requires MultiInputPolicy. The custom extractor below
+            # replaces SB3's default one, so the networks are the same as with CnnPolicy.
+            policy_base = 'MultiInputPolicy'
+            if policy_name != 'CNN_GAP':
+                raise ValueError(
+                    f"policy_name={policy_name}: only CNN_GAP (CNN_GAP_new) supports the Dict observation")
             if policy_name == 'CNN_FC':
                 policy_used_base = CNN_FC
             elif policy_name == 'CNN_GAP':
@@ -267,7 +227,8 @@ class TrainingThread(QtCore.QThread):
                 raise Exception('policy select error: ', policy_name)
 
 
-            policy_used = with_permute(policy_used_base)
+            # No permute wrapper any more: the depth is already stored channels-first (1, H, W)
+            policy_used = policy_used_base
             
             policy_kwargs = dict(
                 features_extractor_class=policy_used,
@@ -331,6 +292,7 @@ class TrainingThread(QtCore.QThread):
             print("Actor betas:", model.actor.optimizer.defaults['betas'])
             print("Critic betas:", model.critic.optimizer.defaults['betas'])
             print("train obs space:", self.env.observation_space) 
+            log_replay_buffer_memory(model)
 
         elif algo == 'TD3':
             # The noise objects for TD3

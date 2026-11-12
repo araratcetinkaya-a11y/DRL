@@ -5,8 +5,9 @@ This is the float32 path that the thesis models were trained with (`get_obs_imag
 - the normalized state is written into row 0 of a second channel;
 - the result has shape (height, width, 2) and dtype float32.
 
-The uint8 cast and transpose in `AirsimGymEnv.get_obs` are not part of this module: they were
-added after training and are tracked as audit question Q1 (docs/AUDIT.md).
+Since Phase 3 the environment returns a Dict observation instead (`quantize_depth` and
+`build_observation` below): the depth as uint8 (1, H, W) and the state as float32, stored
+separately. `preprocess_depth` and `stack_depth_and_state` are kept for the float32 layout.
 
 The state values are not clipped. Most of them stay in [0, 1], but some can leave it, for example
 the speed is below 0 while the drone is slower than v_xy_min, and the distance is above 1 when the
@@ -40,6 +41,24 @@ def stack_depth_and_state(depth_processed, state):
     state_channel = np.zeros(depth_processed.shape, dtype=np.float32)
     state_channel[0, :len(state)] = state
     return np.stack([depth_processed.astype(np.float32), state_channel], axis=-1)
+
+
+def quantize_depth(depth_processed):
+    """Processed depth image (H, W) in [0, 1] -> uint8 array (1, H, W) in [0, 255], rounded.
+
+    Rounding (not truncation): 0.3333 -> 85, as 0.3333 * 255 = 84.99. The resolution is
+    max_depth / 255, about 6 cm with max_depth = 15 m. SB3 divides by 255 again before the CNN.
+    """
+    scaled = np.rint(np.clip(depth_processed, 0.0, 1.0) * 255.0)
+    return scaled.astype(np.uint8)[np.newaxis, :, :]
+
+
+def build_observation(depth_uint8, state):
+    """Dict observation: {"depth": uint8 (1, H, W), "state": float32 (n,)}. The two never mix."""
+    return {
+        "depth": depth_uint8,
+        "state": np.asarray(state, dtype=np.float32),
+    }
 
 
 # ------------------------------------------------------------------------ state

@@ -4,8 +4,8 @@ Scope: `dev` at 00026f8 (code identical to `thesis-final` / bd69467), Oct 30, 20
 No code was changed in this phase. Line numbers refer to this commit.
 
 ## Summary
-1. **Open question Q1 (high priority):** as committed, the image observation does not match the
-   declared `observation_space`. With the SB3 fork used here, this raises an error as soon as the
+1. **Q1 (resolved on `dev` in Phase 3, PR 3b; still present in `thesis-final`):** in the thesis
+   code, the image observation does not match the declared `observation_space`. With the SB3 fork used here, this raises an error as soon as the
    environment is wrapped in `DummyVecEnv` (training, evaluation callback, `SAC.load(env=...)`).
    The thesis models were most likely trained before the uint8/transpose block in `get_obs` was
    added. Details and a simulator-free way to confirm it: see "Observation pipeline".
@@ -57,7 +57,34 @@ k_obs_penalty 0.5, k_speed_near_obs 50, max_safe_speed_near_obs 3.5 m/s, k_jerk_
 k_jerk_yaw 0.03. Terminal rewards in `compute_reward_final`: reach +30, crash -25, outside -10;
 distance shaping coefficient 40.
 
-## Observation pipeline (as committed)
+## Phase 3: Dict observation (PR 3a tests, PR 3b implementation)
+Since PR 3b, `get_obs` returns `get_obs_dict()`:
+`{"depth": uint8 (1, 70, 200), "state": float32 (6,)}`, declared as
+`Dict(depth=Box(0, 255, (1, H, W), uint8), state=Box(-inf, inf, (n,), float32))`.
+
+| Item | Thesis (`thesis-final`) | `dev` after PR 3b |
+| --- | --- | --- |
+| Observation | one array, depth + state in a second channel | Dict, depth and state separate |
+| Depth | float32 in training (uint8 block added later, truncating) | uint8, rounded (resolution 15 m / 255, about 6 cm) |
+| State | float32 in training | float32, never quantized |
+| SB3 policy | `CnnPolicy` + `with_permute` | `MultiInputPolicy`, no permute wrapper |
+| Replay buffer | `ReplayBuffer`, 224 KB per transition | `DictReplayBuffer`, 28.0 KB per transition (about 8x less) |
+| `CNN_GAP_new` | reads channel 0 and row 0 of channel 1 | reads `obs["depth"]` and `obs["state"]`; same layers, same outputs (characterization test) |
+| `features_dim` | from the config, not checked | computed from the input size; a wrong `cnn_feature_num` raises ValueError |
+
+Behavior change: only the depth precision (uint8 instead of float32). A short training run on the
+university PC is needed to confirm training still works. Models trained before PR 3b cannot be
+loaded with this code (different observation space); use the `thesis-final` worktree.
+
+Not updated yet (report only):
+- `thread_evaluation.py` saves `obs_eval.npy` as a list of dicts; `result_analysis.py` and
+  `inspect_npy.py` still read it as an array with a channel index and will fail on new evaluations.
+- Extractors other than `CNN_GAP_new` (`CNN_FC`, `CNN_GAP_BN`, `CNN_MobileNet`, `No_CNN`) do not
+  support the Dict observation; `thread_train.py` now raises a clear error for them.
+- The Q-map code now uses `policy.obs_to_tensor` and the model's device, but is not covered by a
+  test (needs `generate_q_map = True` and a model).
+
+## Observation pipeline (thesis code, before Phase 3)
 | Step | Where | Output |
 | --- | --- | --- |
 | 1. Depth in meters | `get_depth_image` (L616) | float32 (h, w) |
@@ -142,7 +169,7 @@ the crash step (or never, if the crash is detected by `has_collided` at a larger
 SAFE_DISTANCE had another value in the thesis experiments should be checked against the thesis text
 and the saved run configs. No change was made.
 
-## Places that use `obs` as an array
+## Places that used `obs` as an array (thesis code; updated in PR 3b unless noted above)
 | Place | Line | Assumption |
 | --- | --- | --- |
 | CameraError fallback in `step` | L376 | `np.zeros(observation_space.shape, float32)`: (70, 200, 2) float, while normal observations are (2, 70, 200) uint8 |
