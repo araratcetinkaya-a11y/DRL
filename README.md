@@ -43,6 +43,20 @@ Python · PyTorch · Stable-Baselines3 · OpenAI Gym · Microsoft AirSim / Unrea
 | `env/` | Reproducible thesis environment: setup script and pinned requirements |
 | `docs/` | Code audit and project notes |
 
+## Observation (since Phase 3)
+
+The environment returns a dictionary observation:
+
+| Key | Shape | Type | Content |
+| --- | --- | --- | --- |
+| `depth` | (1, 70, 200) | uint8 | Depth image, clipped at 15 m and inverted: 255 = touching an obstacle, 0 = 15 m or farther |
+| `state` | (6,) | float32 | Distance to goal, relative yaw, speed, yaw rate, last two actions (normalized, not clipped) |
+
+Storing the depth as uint8 and the state separately as float32 cuts the replay buffer from 224 KB to
+28 KB per transition (about 8x), without quantizing the state. SB3 (`MultiInputPolicy`) divides the
+depth by 255 before the CNN. The thesis models used a float32 layout and are evaluated with the code
+of the `thesis-final` tag.
+
 ## Running the tests
 
 The tests run without AirSim, Unreal Engine, a GPU or a display: `tests/fakes/` replaces the

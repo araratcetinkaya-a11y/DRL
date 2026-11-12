@@ -1,10 +1,8 @@
-"""Target behavior of the Dict observation (roadmap Phase 3). Written before the implementation.
+"""Dict observation (roadmap Phase 3).
 
-Every test here is marked xfail(strict=True): it fails today, because the code still uses the
-2-channel observation. PR 3b implements the Dict observation and removes the markers. If a test
-starts passing before that, strict xfail turns it into a failure.
+These tests were written first, in PR 3a, as xfail(strict=True) tests, before the implementation.
+PR 3b implemented the Dict observation and removed the markers.
 
-Target:
     observation_space = Dict(
         depth = Box(0, 255, (1, H, W), uint8),     # near obstacle = 255, max_depth or farther = 0
         state = Box(-inf, inf, (n,), float32),     # n = dynamic_model.state_feature_length
@@ -12,16 +10,13 @@ Target:
 - the depth is quantized by rounding (not truncation) from the float32 image of preprocess_depth;
 - the state is stored exactly as float32 and never touches the depth image;
 - SB3 uses MultiInputPolicy and DictReplayBuffer, and divides the uint8 depth by 255 itself;
-- CNN_GAP_new reads obs["depth"] and obs["state"]; its layers are unchanged.
+- CNN_GAP_new reads obs["depth"] and obs["state"]; its layers and outputs are unchanged.
 """
 import gym
 import numpy as np
 import pytest
 import torch as th
 from gym import spaces
-
-P3 = "Phase 3 (PR 3b): Dict observation not implemented yet"
-xfail_p3 = pytest.mark.xfail(reason=P3, strict=True)
 
 H, W, N_STATE = 70, 200, 6
 
@@ -34,7 +29,6 @@ def dict_space(height=H, width=W, n_state=N_STATE):
 
 
 # ---------------------------------------------------------- pure functions
-@xfail_p3
 def test_quantize_depth_dtype_shape_and_range():
     from gym_env.core.observation import quantize_depth
 
@@ -45,7 +39,6 @@ def test_quantize_depth_dtype_shape_and_range():
     assert depth.min() == 0 and depth.max() == 255
 
 
-@xfail_p3
 @pytest.mark.parametrize("value, expected", [(1.0, 255), (0.0, 0), (1 - 10 / 15, 85), (0.5, 128), (0.499, 127)])
 def test_quantize_depth_rounds_instead_of_truncating(value, expected):
     """0.3333 * 255 = 84.99 must become 85 (the old uint8 cast gave 84)."""
@@ -55,7 +48,6 @@ def test_quantize_depth_rounds_instead_of_truncating(value, expected):
     assert np.all(depth == expected)
 
 
-@xfail_p3
 def test_build_observation_keeps_state_exact_and_separate_from_depth():
     """Regression for Q1: values like 1.3 or -0.2 must neither change nor affect the depth."""
     from gym_env.core.observation import build_observation
@@ -72,7 +64,6 @@ def test_build_observation_keeps_state_exact_and_separate_from_depth():
 
 
 # ------------------------------------------------------------- environment
-@xfail_p3
 def test_env_observation_space_is_dict(env):
     space = env.observation_space
     n_state = env.unwrapped.dynamic_model.state_feature_length
@@ -85,7 +76,6 @@ def test_env_observation_space_is_dict(env):
     assert space["state"].dtype == np.float32
 
 
-@xfail_p3
 def test_reset_and_step_observations_are_in_declared_space(env, client):
     client.depth_m = 10.0
     obs = env.reset()
@@ -97,7 +87,6 @@ def test_reset_and_step_observations_are_in_declared_space(env, client):
         assert env.observation_space.contains(obs)
 
 
-@xfail_p3
 def test_state_above_one_does_not_change_depth(env, client):
     """The case that the old uint8 block got wrong (depth collapsed to 0)."""
     client.depth_m = 10.0
@@ -108,7 +97,6 @@ def test_state_above_one_does_not_change_depth(env, client):
     assert np.all(obs["depth"] == 85)
 
 
-@xfail_p3
 def test_camera_error_fallback_matches_declared_space(env, monkeypatch):
     from gym_env.envs.airsim_env import CameraError
 
@@ -127,7 +115,6 @@ def test_camera_error_fallback_matches_declared_space(env, monkeypatch):
     assert env.observation_space.contains(obs)
 
 
-@xfail_p3
 def test_dummy_vec_env_returns_dict_observations(thesis_cfg):
     from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -150,7 +137,6 @@ def cnn_class():
     return CNN_GAP_new
 
 
-@xfail_p3
 def test_cnn_output_is_cnn_features_followed_by_unchanged_state():
     extractor = cnn_class()(dict_space())
     batch = {
@@ -165,7 +151,6 @@ def test_cnn_output_is_cnn_features_followed_by_unchanged_state():
     th.testing.assert_close(features[:, -N_STATE:], batch["state"])
 
 
-@xfail_p3
 def test_cnn_layers_are_unchanged_at_thesis_resolution():
     """Same layer shapes as the thesis model (recorded from the frozen code), so weights could be ported."""
     expected = {
@@ -177,7 +162,6 @@ def test_cnn_layers_are_unchanged_at_thesis_resolution():
     assert {k: tuple(v.shape) for k, v in extractor.state_dict().items()} == expected
 
 
-@xfail_p3
 @pytest.mark.parametrize("height, width", [(80, 200), (64, 64)])
 def test_cnn_works_for_other_input_sizes(height, width):
     extractor = cnn_class()(dict_space(height, width))
@@ -222,7 +206,6 @@ def make_sac(buffer_size=300):
     )
 
 
-@xfail_p3
 def test_sac_multi_input_policy_trains_and_stores_depth_as_uint8():
     from stable_baselines3.common.buffers import DictReplayBuffer
 
@@ -242,13 +225,71 @@ def test_sac_multi_input_policy_trains_and_stores_depth_as_uint8():
     assert 0.0 < seen["depth_max"] <= 1.0  # SB3 divided by 255 exactly once
 
 
-@xfail_p3
-def test_replay_buffer_memory_per_transition():
-    """obs + next_obs: 2 x (70*200 bytes + 6*4 bytes) = 28,048 bytes (old float32 layout: 224,000)."""
-    buffer = make_sac(buffer_size=1000).replay_buffer
-    bytes_per_transition = sum(
-        arr.nbytes for arr in list(buffer.observations.values()) + list(buffer.next_observations.values())
-    ) / buffer.buffer_size
+def test_replay_buffer_memory_per_transition(capsys):
+    """obs + next_obs: 2 x (70*200 bytes + 6*4 bytes) = 28,048 bytes (old float32 layout: 224,000).
 
-    assert bytes_per_transition == 2 * (H * W + N_STATE * 4)
+    Uses the same helper that training prints at startup (scripts/utils/replay_buffer_report.py).
+    """
+    from scripts.utils.replay_buffer_report import log_replay_buffer_memory, replay_buffer_memory
+
+    model = make_sac(buffer_size=1000)
+    per_key, bytes_per_transition = replay_buffer_memory(model)
+
+    assert per_key == {"depth": 2 * H * W, "state": 2 * N_STATE * 4}
+    assert bytes_per_transition == 28_048
     assert 224_000 / bytes_per_transition > 7.9  # about 8x less than the thesis layout
+
+    log_replay_buffer_memory(model)
+    assert "28.0 KB per transition" in capsys.readouterr().out
+
+
+def test_cnn_gives_the_same_features_as_the_thesis_cnn():
+    """Characterization: with the same random weights (seed 0) and the same depth image, the new
+    CNN_GAP_new gives exactly the output recorded from the thesis version (2-channel input)."""
+    expected_sum = [5.961673034355044, 6.65023054741323, 6.353271152824163]
+    expected_sum_sq = [1.0366705918213353, 1.1111109771627823, 1.0550904182563696]
+    expected_max = [0.2727471888065338, 0.2667771577835083, 0.297896146774292]
+    expected_nonzero = [55, 62, 61]
+
+    th.manual_seed(0)
+    extractor = cnn_class()(dict_space())
+    depth = th.rand(3, 1, H, W, generator=th.Generator().manual_seed(1))
+    with th.no_grad():
+        cnn_out = extractor({"depth": depth, "state": th.zeros(3, N_STATE)})[:, :128].double()
+
+    assert cnn_out.sum(1).tolist() == pytest.approx(expected_sum, rel=1e-6)
+    assert (cnn_out ** 2).sum(1).tolist() == pytest.approx(expected_sum_sq, rel=1e-6)
+    assert cnn_out.max(1).values.tolist() == pytest.approx(expected_max, rel=1e-6)
+    assert (cnn_out > 0).sum(1).tolist() == expected_nonzero
+
+
+def test_cnn_rejects_a_features_dim_that_does_not_match_the_input():
+    """cnn_feature_num in the config must match the image size; a wrong value fails early and clearly."""
+    with pytest.raises(ValueError, match="features_dim=132"):
+        cnn_class()(dict_space(), features_dim=132)
+    assert cnn_class()(dict_space(), features_dim=134, state_feature_dim=6).features_dim == 134
+
+
+def test_state_values_stay_in_their_documented_ranges(env, client):
+    """The state bounds are declared as -inf..inf (no clipping, decision of Nov 12, 2026).
+    This test documents the real ranges with random actions in the fake simulator:
+    - distance / start distance: 0 to about 2.7 (start distance 50 m, workspace +/-60 m);
+    - relative yaw, yaw rate and the two last actions: 0 to 1;
+    - speed: -0.111 at standstill (v_xy_min = 0.5 m/s) up to 1.
+    """
+    low = np.array([0.0, 0.0, -1 / 9 - 1e-6, 0.0, 0.0, 0.0])
+    high = np.array([2.75, 1.0, 1.0, 1.0, 1.0, 1.0])
+    rng = np.random.default_rng(0)
+    client.depth_m = 10.0  # no obstacle closer than the crash distance
+
+    seen_min, seen_max = np.full(N_STATE, np.inf), np.full(N_STATE, -np.inf)
+    for _ in range(3):
+        obs, done, steps = env.reset(), False, 0
+        while not done and steps < 300:
+            seen_min, seen_max = np.minimum(seen_min, obs["state"]), np.maximum(seen_max, obs["state"])
+            obs, _, done, _ = env.step(rng.uniform(-1, 1, 2).astype(np.float32))
+            steps += 1
+
+    assert np.all(seen_min >= low), seen_min
+    assert np.all(seen_max <= high + 1e-6), seen_max
+    assert seen_min[2] < 0  # the negative speed value really occurs (standstill at reset)

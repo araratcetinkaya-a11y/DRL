@@ -410,65 +410,55 @@ class CNN_MobileNet(BaseFeaturesExtractor):
 
 
 class CNN_GAP_new(BaseFeaturesExtractor):
-    """
-    :param observation_space: (gym.Space)
-    :param features_dim: (int) Number of features extracted.
-        This corresponds to the number of unit for the last layer.
+    """Feature extractor of the thesis: a small CNN on the depth image, followed by the state.
+
+    Input (Phase 3): Dict observation with
+        "depth": (B, 1, H, W), already divided by 255 by SB3 (MultiInputPolicy), so in [0, 1]
+        "state": (B, n)
+    Output: (B, n_cnn + n), the flattened CNN features followed by the unchanged state.
+
+    The layers are the same as in the thesis. features_dim is computed from the observation space
+    (128 + 6 = 134 at 70x200); if features_dim or state_feature_dim are given, they are checked.
     """
 
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256, state_feature_dim=0):
-        super(CNN_GAP_new, self).__init__(observation_space, features_dim)
-        # Can use model.actor.features_extractor.feature_all to print all features
-        # set CNN and state feature num
-        assert state_feature_dim > 0
-        self.feature_num_state = state_feature_dim
-        self.feature_num_cnn = features_dim - state_feature_dim
+    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = None, state_feature_dim: int = None):
+        # features_dim is only known after the layers exist; it is set below
+        super(CNN_GAP_new, self).__init__(observation_space, features_dim=1)
+        depth_shape = observation_space["depth"].shape  # (C, H, W)
+        n_state = observation_space["state"].shape[0]
+        if state_feature_dim is not None and state_feature_dim != n_state:
+            raise ValueError(f"state_feature_dim={state_feature_dim}, but the state has {n_state} values")
+
+        self.conv1 = nn.Conv2d(depth_shape[0], 8, 5, 2)
+        self.conv2 = nn.Conv2d(8, 8, 5, 2)
+        self.conv3 = nn.Conv2d(8, 8, 3, 2)
+        self.pool = nn.MaxPool2d(2, 3)
+        self.gap_layer = nn.AvgPool2d(kernel_size=(8, 10), stride=1)  # unused (thesis code)
+
+        with th.no_grad():
+            n_cnn = self._cnn(th.zeros(1, *depth_shape)).shape[1]
+        if features_dim is not None and features_dim != n_cnn + n_state:
+            raise ValueError(
+                f"features_dim={features_dim}, but the CNN gives {n_cnn} + state {n_state} = {n_cnn + n_state} "
+                f"for depth input {depth_shape} (check cnn_feature_num in the config)")
+
+        self._features_dim = n_cnn + n_state
+        self.feature_num_state = n_state
+        self.feature_num_cnn = n_cnn
         self.feature_all = None
 
-        # input size (100, 80)
-        # input size 80 60
-        self.conv1 = nn.Conv2d(1, 8, 5, 2)  # 28,38
-        self.conv2 = nn.Conv2d(8, 8, 5, 2)  # 12,17
-        self.conv3 = nn.Conv2d(8, 8, 3, 2)  # 5, 8
-        self.pool = nn.MaxPool2d(2, 3)
-        self.gap_layer = nn.AvgPool2d(kernel_size=(8, 10), stride=1)
-
-    def forward(self, observations: th.Tensor) -> th.Tensor:
-
-        if not hasattr(self, '_printed_math'):
-            print(f"[CNN_GAP_new KONTROLÜ] GİRİŞ shape: {observations.shape}")
-            self._printed_math = True
-
-
-
-        depth_img = observations[:, 0:1, :, :]  # 0-1 0->20m 1->0m
-        # print(th.min(depth_img), th.max(depth_img))
-        # norm image to (-1, 1)
-        depth_img_norm = (depth_img - 0.5) * 2
-        # print(th.min(depth_img_norm), th.max(depth_img_norm))
-
-        # 1, 8, 38, 48  1,8,28,38
+    def _cnn(self, depth_img):
+        """Depth in [0, 1] -> flattened CNN features."""
+        depth_img_norm = (depth_img - 0.5) * 2  # [0, 1] -> [-1, 1]
         self.layer_1_out = F.relu(self.conv1(depth_img_norm))
-        # 1, 8, 18, 23  1,8,12,17
         self.layer_2_out = F.relu(self.conv2(self.layer_1_out))
-        self.layer_3_out = F.relu(self.conv3(
-            self.layer_2_out))  # 1, 16, 8, 10  1,8,5,8
-        self.layer_small = self.pool(self.layer_3_out)  # 1,8,2,3
-        # self.gap_layer_out = self.gap_layer(self.layer_3_out)               # 1, 16, 1, 1
-        self.flatten = th.flatten(self.layer_small, start_dim=1)
-        # self.flatten = self.flatten.unsqueeze(0)
+        self.layer_3_out = F.relu(self.conv3(self.layer_2_out))
+        self.layer_small = self.pool(self.layer_3_out)
+        return th.flatten(self.layer_small, start_dim=1)
 
-        # cnn_feature = self.gap_layer_out  # [1, 16, 1, 1]
-        # cnn_feature = cnn_feature.squeeze(dim=3)  # [1, 16, 1]
-        # cnn_feature = cnn_feature.squeeze(dim=2)  # [1, 16]
-        # cnn_feature = th.clamp(cnn_feature, -1, 2)
-        # cnn_feature = self.batch_layer(cnn_feature)
-
-        state_feature = observations[:, 1, 0, 0:self.feature_num_state]
-        # transfer state feature from 0~1 to -1~1
-        # state_feature = state_feature*2 - 1
-
+    def forward(self, observations) -> th.Tensor:
+        self.flatten = self._cnn(observations["depth"])
+        state_feature = observations["state"]
         x = th.cat((self.flatten, state_feature), dim=1)
-        self.feature_all = x  # use  to update feature before FC
-
+        self.feature_all = x  # use to inspect the features before the fully connected layers
         return x
