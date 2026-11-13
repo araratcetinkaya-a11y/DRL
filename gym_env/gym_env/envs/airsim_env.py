@@ -54,10 +54,10 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         
         self.SAFE_DISTANCE = 2            # Güvenli bölge (metre)
         self.k_obs_penalty = 0.5            # Engel cezasının sertliği
-        self.k_speed_near_obs = 50         # Engele yakın hız cezasının katsayısı
+        self.k_speed_near_obs = 1          # Engele yakın hız cezasının katsayısı
         self.k_jerk_fwd = 0.025              # İleri sarsıntı cezası (küçük başlayın)
         self.k_jerk_yaw = 0.03               # Dönüş sarsıntı cezası
-        self.max_safe_speed_near_obs = 3.5
+        self.max_safe_speed_near_obs = 4
 
         # --- YENİ (GÖREV A): Son eylemi saklamak için ---
         self.last_action = None
@@ -95,7 +95,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
         # set start and goal position according to different environment
         if self.env_name == 'NH_center':
-            start_position = [0, 0, 3]
+            start_position = [0, 0, 1.5]
             goal_rect = [-128, -128, 128, 128]  # rectangular goal pose
             goal_distance = 90
             self.dynamic_model.set_start(
@@ -147,7 +147,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             self.work_space_z = [0, 100]
             self.max_episode_steps = 600
         elif self.env_name == 'SimpleAvoid':
-            start_position = [0, 0, 3]
+            start_position = [0, 0, 5]
             goal_distance = 50
             self.dynamic_model.set_start(
                 start_position, random_angle=math.pi*2)
@@ -158,7 +158,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             self.work_space_y = [
                 start_position[1] - goal_distance - 10, start_position[1] + goal_distance + 10]
             self.work_space_z = [0.5, 50]
-            self.max_episode_steps = 1000
+            self.max_episode_steps = 400
         elif self.env_name == 'Forest':
             start_position = [0, 0, 10]
             goal_position = [280, -200, 50]
@@ -879,7 +879,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
     def compute_reward_final(self, done, action, return_terms=False):
 
         # Reward terms live in gym_env/core/reward.py (logic unchanged)
-        distance_reward_coef = 500 if self.env_name == 'NH_center' else 40
+        distance_reward_coef = 500 if self.env_name == 'NH_center' else 50
 
         # 1. Shaping terms (every step)
         distance_now = self.get_distance_to_goal_3d()

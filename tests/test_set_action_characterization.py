@@ -1,11 +1,13 @@
 """Characterization tests for set_action after moving its math to gym_env/core/action_model.py.
 
-1. Equivalence with the frozen code: EXPECTED_GAIN_1_1 was recorded by running the code of the
-   `thesis-final` tag on the fake AirSim client with the action sequence below, before
-   set_action was changed. That code multiplies both actions by 1.1 (a post-training evaluation
-   experiment). With `action_gain = 1.1` in the config, the refactored code must send exactly
-   the same commands.
-2. Training behavior: with the unchanged thesis config the gain is 1.0, as in training.
+1. Training run: EXPECTED_TRAINING_RUN was recorded by running the code of the thesis training
+   run (tag `thesis-final.1`, docs/TRAINING_RUN.md) on the fake AirSim client with the action
+   sequence below. With the thesis config (gain 1.0) the refactored code must send exactly the
+   same commands, including the altitude (start height 5 m) and the command duration (dt).
+2. Equivalence with `thesis-final`: EXPECTED_GAIN_1_1 was recorded from the code of the
+   `thesis-final` tag, which multiplies both actions by 1.1 (a post-training evaluation
+   experiment). With `action_gain = 1.1` in the config, the refactored code must reproduce it.
+3. The training speed and yaw rate sequence, worked out by hand from the config.
 
 Each recorded row is what reached moveByVelocityZAsync:
 (vx_world [m/s], vy_world [m/s], forward speed setpoint [m/s], yaw rate [deg/s]).
@@ -23,6 +25,31 @@ ACTIONS = [
     (1.0, 0.0), (1.0, 0.5), (0.5, -1.0), (1.0, 1.0), (1.0, 0.0), (1.0, 0.0), (1.0, 0.0),
     (1.0, 0.0), (1.0, 0.0), (1.0, 0.0), (1.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (-1.0, -0.25),
     (0.0, 0.0), (-1.0, 0.0), (-1.0, 0.0), (-1.0, 0.0), (-1.0, 0.0), (-1.0, 0.0), (-1.0, 0.0),
+]
+
+# (vx_world, vy_world, speed setpoint, yaw rate); every command had z = -5 and duration = 0.1
+EXPECTED_TRAINING_RUN = [
+    (-0.10849095903294602, -0.4880878115750399, 0.5, 0.0),
+    (-0.19528372625930285, -0.8785580608350718, 0.9, 30.0),
+    (-0.18215501390865435, -1.0848131410099797, 1.1, -60.0),
+    (-0.40166045488036184, -1.4452227783235707, 1.5, 60.0),
+    (-0.31463138766040294, -1.873768152653601, 1.9, 0.0),
+    (-0.38086957453627723, -2.268245658475412, 2.3, 0.0),
+    (-0.4471077614121515, -2.6627231642972222, 2.6999999999999997, 0.0),
+    (-0.5133459482880258, -3.057200670119033, 3.0999999999999996, 0.0),
+    (-0.5795841351639001, -3.451678175940844, 3.4999999999999996, 0.0),
+    (-0.6458223220397744, -3.8461556817626543, 3.8999999999999995, 0.0),
+    (-0.7120605089156488, -4.240633187584465, 4.3, 0.0),
+    (-0.7782986957915231, -4.6351106934062765, 4.7, 0.0),
+    (-0.7120605089156488, -4.240633187584465, 4.3, 0.0),
+    (-0.6458223220397744, -3.8461556817626548, 3.9, -15.0),
+    (-0.7462816333253164, -3.827932042730291, 3.9, 0.0),
+    (-0.6697399273432326, -3.435323628091287, 3.5, 0.0),
+    (-0.593198221361149, -3.042715213452283, 3.1, 0.0),
+    (-0.5166565153790652, -2.6501067988132787, 2.7, 0.0),
+    (-0.4401148093969815, -2.2574983841742746, 2.3000000000000003, 0.0),
+    (-0.3635731034148978, -1.8648899695352703, 1.9000000000000004, 0.0),
+    (-0.2870313974328141, -1.4722815548962662, 1.5000000000000004, 0.0),
 ]
 
 EXPECTED_GAIN_1_1 = [
@@ -56,8 +83,11 @@ EXPECTED_SPEED_GAIN_1_0 = [0.5, 0.9, 1.1, 1.5, 1.9, 2.3, 2.7, 3.1, 3.5, 3.9, 4.3
 EXPECTED_YAW_RATE_GAIN_1_0 = [0.0, 30.0, -60.0, 60.0] + [0.0] * 9 + [-15.0] + [0.0] * 7
 
 
-def run_actions(environment):
-    """Apply ACTIONS one by one; return what reached moveByVelocityZAsync at each step."""
+def run_actions(environment, z_and_duration=None):
+    """Apply ACTIONS one by one; return what reached moveByVelocityZAsync at each step.
+
+    If a list is given as z_and_duration, the altitude and duration of each command are appended to it.
+    """
     environment.reset()
     dynamics = environment.unwrapped.dynamic_model
     client = dynamics.client
@@ -67,7 +97,9 @@ def run_actions(environment):
         dynamics.set_action(np.array(action, dtype=np.float32))
         moves = [c for c in client.calls[n_calls:] if c[0] == "moveByVelocityZAsync"]
         assert len(moves) == 1, f"step {step}: expected one velocity command"
-        vx, vy, _z, _duration = moves[0][1]
+        vx, vy, z, duration = moves[0][1]
+        if z_and_duration is not None:
+            z_and_duration.append((z, duration))
         yaw_rate = moves[0][2]["yaw_mode"].yaw_or_rate
         sent.append((vx, vy, float(dynamics.v_xy_sp), float(yaw_rate)))
     return sent
@@ -75,6 +107,15 @@ def run_actions(environment):
 
 def test_thesis_config_uses_training_gain(env):
     assert env.unwrapped.dynamic_model.action_gain == 1.0
+
+
+def test_reproduces_training_run_commands(env):
+    z_and_duration = []
+    sent = run_actions(env, z_and_duration)
+
+    for step, (actual, expected) in enumerate(zip(sent, EXPECTED_TRAINING_RUN)):
+        assert actual == pytest.approx(expected, rel=1e-9, abs=1e-12), f"step {step}, action {ACTIONS[step]}"
+    assert z_and_duration == [(-5, 0.1)] * len(ACTIONS)
 
 
 def test_gain_1_1_reproduces_frozen_thesis_code(thesis_cfg):

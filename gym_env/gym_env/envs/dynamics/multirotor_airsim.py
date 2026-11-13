@@ -57,7 +57,7 @@ class MultirotorDynamicsAirsim():
         self.client.setAngleLevelControllerGains(airsim.AngleLevelControllerGains(
             airsim.PIDGains(2.5, 0.0, 0.0),  # Roll
             airsim.PIDGains(2.5, 0.0, 0.0),  # Pitch
-            airsim.PIDGains(4, 0, 0.0)   # Yaw 
+            airsim.PIDGains(3.5, 0, 0.0)   # Yaw 
         ))
 
         self.client.setVelocityControllerGains(vel_gains)

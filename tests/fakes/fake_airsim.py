@@ -180,10 +180,10 @@ class MultirotorClient:
         self._record("armDisarm", arm)
 
     def setVelocityControllerGains(self, gains, vehicle_name=""):
-        self._record("setVelocityControllerGains")
+        self._record("setVelocityControllerGains", gains)
 
     def setAngleLevelControllerGains(self, gains, vehicle_name=""):
-        self._record("setAngleLevelControllerGains")
+        self._record("setAngleLevelControllerGains", gains)
 
     def simConsoleExecute(self, command):
         self._record("simConsoleExecute", command)
