@@ -15,6 +15,8 @@ sys.path.append(
     r"C:\Users\helei\Documents\GitHub\UAV_Navigation_DRL_AirSim\scripts")
 
 
+print("bunu kullanıyom")
+
 def rule_based_policy(obs):
     '''
     custom linear policy
@@ -84,16 +86,28 @@ class EvaluateThread(QtCore.QThread):
         if algo == 'TD3':
             model = TD3.load(self.model_file, env=self.env)
         elif algo == 'SAC':
-            
+            print("\n--- MODEL FILE ---")
+            print(self.model_file)
+
             print("\n--- CURRENT EVALUATION ENV ---")
             print("env observation_space:", self.env.observation_space)
 
-            model_test = SAC.load(self.model_file)
+            # Modeli ENV vermeden açıyoruz:
+            # Böylece modelin kendi kaydedilmiş observation_space'ini görebiliriz
+            model_test = SAC.load(
+                self.model_file,
+                buffer_size=1
+            )
 
             print("\n--- SAVED MODEL ---")
             print("model observation_space:", model_test.observation_space)
 
-            model = SAC.load(self.model_file, env=self.env)
+            # Gerçek evaluation yüklemesi
+            model = SAC.load(
+                self.model_file,
+                env=self.env,
+                buffer_size=1
+    )
             
         elif algo == 'PPO':
             model = PPO.load(self.model_file, env=self.env)

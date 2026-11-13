@@ -223,11 +223,12 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
                                                        self.cnn_feature_length + self.state_feature_length),
                                                 dtype=np.float32)
         else:
-           self.observation_space = spaces.Box(low=0.0,  # <-- Değişti (float)
-                                                high=1.0, # <-- Değişti (float)
+           self.observation_space = spaces.Box(
+                                                low=0.0,
+                                                high=1.0,
                                                 shape=(self.screen_height, self.screen_width, 2),
-                                                dtype=np.uint8 # <-- En önemli değişiklik (uint8 -> float32)
-                                            ) #en başarılı model için lazım bu 
+                                                dtype=np.float32
+                                            ) 
         ''' self.observation_space = spaces.Box(low=0, 
                                                 high=255, 
                                                 shape=(2, self.screen_height, self.screen_width), 
@@ -506,20 +507,13 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
     def get_obs(self):
         if self.perception_type == 'vector':
             obs = self.get_obs_vector()
+
         elif self.perception_type == 'lgmd':
             obs = self.get_obs_lgmd()
+
         else:
             obs = self.get_obs_image()
-            
-            if obs.dtype == np.float32 or obs.dtype == np.float64:
-                if obs.max() <= 1.0: # Zaten 0-255 arasındaysa çarpmaması için kontrol
-                    obs = obs * 255.0
-            obs = obs.astype(np.uint8)
-            
-            # 2. Boyutu (70, 200, 2) -> (2, 70, 200) yap (H, W, C -> C, H, W)
-            # Eğer kanal sayısı (2) zaten en sondayysa transpoze et
-            if len(obs.shape) == 3 and obs.shape[-1] == 2:
-                obs = np.transpose(obs, (2, 0, 1))
+            obs = obs.astype(np.float32)
 
         return obs
 

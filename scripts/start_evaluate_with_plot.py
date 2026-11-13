@@ -29,7 +29,7 @@ def main():
     # set evaluation model path  "C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_10_22_02_27_Multirotor_CNN_GAP_SAC"
     #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_10_26_04_09_Multirotor_CNN_GAP_SAC"
     #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\best_eval\SimpleAvoid\2025_11_25_17_43_Multirotor_CNN_GAP_SAC"
-    eval_path = r"C:\Users\Studentenaccount\Desktop\Train logs\2025_10_26_04_09_Multirotor_CNN_GAP_SAC" 
+    eval_path = r"C:\Users\Studentenaccount\Desktop\Train logs\2025_11_25_17_43_Multirotor_CNN_GAP_SAC" 
 
     #"C:\Users\Studentenaccount\Desktop\Ararat Cetinkaya MA\DRL-New\UAV_Navigation_DRL_AirSim\logs\SimpleAvoid\2025_08_31_10_46_Multirotor_CNN_GAP_SAC"
 
