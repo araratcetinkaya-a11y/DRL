@@ -14,7 +14,7 @@ import cv2
 from .dynamics.multirotor_simple import MultirotorDynamicsSimple
 from .dynamics.multirotor_airsim import MultirotorDynamicsAirsim
 from .dynamics.fixedwing_simple import FixedwingDynamicsSimple
-from gym_env.core.observation import preprocess_depth, stack_depth_and_state
+from gym_env.core.observation import build_observation, preprocess_depth, quantize_depth, stack_depth_and_state
 from gym_env.core.reward import (
     distance_progress_reward,
     jerk_penalty,
@@ -231,15 +231,17 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
                                                        self.cnn_feature_length + self.state_feature_length),
                                                 dtype=np.float32)
         else:
-           self.observation_space = spaces.Box(low=0.0,  # <-- Değişti (float)
-                                                high=1.0, # <-- Değişti (float)
-                                                shape=(self.screen_height, self.screen_width, 2),
-                                                dtype=np.uint8 # <-- En önemli değişiklik (uint8 -> float32)
-                                            ) #en başarılı model için lazım bu 
-        ''' self.observation_space = spaces.Box(low=0, 
-                                                high=255, 
-                                                shape=(2, self.screen_height, self.screen_width), 
-                                                dtype=np.uint8)'''
+            # Dict observation (Phase 3): depth and state are stored separately, see get_obs().
+            # The thesis models used a float32 (H, W, 2) layout; they can only be evaluated with
+            # the code of the thesis-final tag (docs/AUDIT.md, Q1).
+            self.observation_space = spaces.Dict({
+                "depth": spaces.Box(low=0, high=255,
+                                    shape=(1, self.screen_height, self.screen_width),
+                                    dtype=np.uint8),
+                "state": spaces.Box(low=-np.inf, high=np.inf,
+                                    shape=(self.dynamic_model.state_feature_length,),
+                                    dtype=np.float32),
+            })
 
 
         self.action_space = self.dynamic_model.action_space
@@ -381,7 +383,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             except CameraError as e:
                 obs_safe = getattr(self, "_last_obs", None)
                 if obs_safe is None:
-                     obs_safe = np.zeros(self.observation_space.shape, dtype=np.float32) 
+                    obs_safe = self._zero_observation()
                     
                 info = {
                     "TimeLimit.truncated": True,
@@ -458,14 +460,10 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             if self.generate_q_map and (self.cfg.get('options', 'algo') in ['TD3', 'SAC']):
                 if self.model is not None:
                     with th.no_grad():
-                        obs_copy = obs.copy()
-                        if self.perception_type != 'vector':
-                            obs_copy = obs_copy.swapaxes(0, 1)
-                            obs_copy = obs_copy.swapaxes(0, 2)
-                        q_value_current = self.model.critic(
-                            th.from_numpy(obs_copy[None]).float().cuda(),
-                            th.from_numpy(action[None]).float().cuda()
-                        )
+                        # obs_to_tensor handles Box and Dict observations and the model's device
+                        obs_tensor, _ = self.model.policy.obs_to_tensor(obs)
+                        action_tensor = th.as_tensor(action[None], dtype=th.float32, device=self.model.device)
+                        q_value_current = self.model.critic(obs_tensor, action_tensor)
                         q_1 = q_value_current[0].cpu().numpy()[0]
                         q_2 = q_value_current[1].cpu().numpy()[0]
                         q_value = min(q_1, q_2)[0]
@@ -517,23 +515,35 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         elif self.perception_type == 'lgmd':
             obs = self.get_obs_lgmd()
         else:
-            obs = self.get_obs_image()
-            
-            if obs.dtype == np.float32 or obs.dtype == np.float64:
-                if obs.max() <= 1.0: # Zaten 0-255 arasındaysa çarpmaması için kontrol
-                    obs = obs * 255.0
-            obs = obs.astype(np.uint8)
-            
-            # 2. Boyutu (70, 200, 2) -> (2, 70, 200) yap (H, W, C -> C, H, W)
-            # Eğer kanal sayısı (2) zaten en sondayysa transpoze et
-            if len(obs.shape) == 3 and obs.shape[-1] == 2:
-                obs = np.transpose(obs, (2, 0, 1))
+            obs = self.get_obs_dict()
 
         return obs
 
+    def get_obs_dict(self):
+        """Dict observation (Phase 3): {"depth": uint8 (1, H, W), "state": float32 (n,)}.
+
+        The depth goes through the same preprocessing as in the thesis (gym_env/core/observation.py)
+        and is then rounded to uint8. The state is not quantized.
+        """
+        image_meters = self.get_depth_image()
+        image_processed, self.min_distance_to_obstacles = preprocess_depth(
+            image_meters, self.screen_height, self.screen_width, self.max_depth_meters)
+        state_feature = self.dynamic_model._get_state_feature()
+        return build_observation(quantize_depth(image_processed), state_feature)
+
+    def _zero_observation(self):
+        """All-zero observation that matches observation_space (used if the camera fails)."""
+        if isinstance(self.observation_space, spaces.Dict):
+            return {key: np.zeros(space.shape, dtype=space.dtype)
+                    for key, space in self.observation_space.spaces.items()}
+        return np.zeros(self.observation_space.shape, dtype=self.observation_space.dtype)
+
  
     def get_obs_image(self):
-        """Depth image + state -> observation (H, W, 2), float32 (the path used in training).
+        """Depth image + state -> (H, W, 2), float32: the layout the thesis models were trained with.
+
+        Not used by get_obs() any more (Phase 3 returns a Dict, see get_obs_dict); kept because it
+        documents the thesis observation and is covered by a characterization test.
 
         Preprocessing and stacking live in gym_env/core/observation.py:
         depth in meters -> resize -> clip to max_depth_meters -> normalize -> invert (near = 1),

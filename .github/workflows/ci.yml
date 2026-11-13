@@ -42,8 +42,8 @@ jobs:
       - name: Install pinned build tools (gym 0.19 needs older pip/setuptools)
         run: python -m pip install "pip<24.1" "setuptools==65.5.0" "wheel==0.38.4"
 
-      - name: Install CPU-only PyTorch 1.10.1 (same version as the thesis)
-        run: python -m pip install "torch==1.10.1+cpu" -f https://download.pytorch.org/whl/cpu/torch_stable.html
+      - name: Install CPU-only PyTorch 1.10.1 and torchvision 0.11.2 (same versions as the thesis)
+        run: python -m pip install "torch==1.10.1+cpu" "torchvision==0.11.2+cpu" -f https://download.pytorch.org/whl/cpu/torch_stable.html
 
       - name: Install dependencies
         run: |
