@@ -23,11 +23,6 @@ import sys
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CURRENT_DIR))
 
-
-print("afasdfaf_thread")
-
-
-
 def with_permute(extractor_class):
     """
     Bu fonksiyon, SB3'ün 'features_extractor_class' girdisi olarak
