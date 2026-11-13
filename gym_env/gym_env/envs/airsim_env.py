@@ -46,10 +46,10 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         
         self.SAFE_DISTANCE = 2            # Güvenli bölge (metre)
         self.k_obs_penalty = 0.5            # Engel cezasının sertliği
-        self.k_speed_near_obs = 50         # Engele yakın hız cezasının katsayısı
+        self.k_speed_near_obs = 1         # Engele yakın hız cezasının katsayısı
         self.k_jerk_fwd = 0.025              # İleri sarsıntı cezası (küçük başlayın)
         self.k_jerk_yaw = 0.03               # Dönüş sarsıntı cezası
-        self.max_safe_speed_near_obs = 3.5
+        self.max_safe_speed_near_obs = 4
 
         # --- YENİ (GÖREV A): Son eylemi saklamak için ---
         self.last_action = None
@@ -87,7 +87,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
         # set start and goal position according to different environment
         if self.env_name == 'NH_center':
-            start_position = [0, 0, 3]
+            start_position = [0, 0, 1.5]
             goal_rect = [-128, -128, 128, 128]  # rectangular goal pose
             goal_distance = 90
             self.dynamic_model.set_start(
@@ -139,7 +139,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             self.work_space_z = [0, 100]
             self.max_episode_steps = 600
         elif self.env_name == 'SimpleAvoid':
-            start_position = [0, 0, 3]
+            start_position = [0, 0, 5]
             goal_distance = 50
             self.dynamic_model.set_start(
                 start_position, random_angle=math.pi*2)
@@ -150,7 +150,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             self.work_space_y = [
                 start_position[1] - goal_distance - 10, start_position[1] + goal_distance + 10]
             self.work_space_z = [0.5, 50]
-            self.max_episode_steps = 1000
+            self.max_episode_steps = 400
         elif self.env_name == 'Forest':
             start_position = [0, 0, 10]
             goal_position = [280, -200, 50]
@@ -223,16 +223,11 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
                                                        self.cnn_feature_length + self.state_feature_length),
                                                 dtype=np.float32)
         else:
-           self.observation_space = spaces.Box(low=0.0,  # <-- Değişti (float)
+            self.observation_space = spaces.Box(low=0.0,  # <-- Değişti (float)
                                                 high=1.0, # <-- Değişti (float)
                                                 shape=(self.screen_height, self.screen_width, 2),
-                                                dtype=np.uint8 # <-- En önemli değişiklik (uint8 -> float32)
-                                            ) #en başarılı model için lazım bu 
-        ''' self.observation_space = spaces.Box(low=0, 
-                                                high=255, 
-                                                shape=(2, self.screen_height, self.screen_width), 
-                                                dtype=np.uint8)'''
-
+                                                dtype=np.float32 # <-- En önemli değişiklik (uint8 -> float32)
+                                            )
 
         self.action_space = self.dynamic_model.action_space
         print("action_space.low  =", self.action_space.low)
@@ -373,8 +368,8 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             except CameraError as e:
                 obs_safe = getattr(self, "_last_obs", None)
                 if obs_safe is None:
-                     obs_safe = np.zeros(self.observation_space.shape, dtype=np.float32) 
-                    
+                    obs_safe = np.zeros(self.observation_space.shape, dtype=np.float32)
+
                 info = {
                     "TimeLimit.truncated": True,
                     "camera_error": True,
@@ -510,16 +505,6 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
             obs = self.get_obs_lgmd()
         else:
             obs = self.get_obs_image()
-            
-            if obs.dtype == np.float32 or obs.dtype == np.float64:
-                if obs.max() <= 1.0: # Zaten 0-255 arasındaysa çarpmaması için kontrol
-                    obs = obs * 255.0
-            obs = obs.astype(np.uint8)
-            
-            # 2. Boyutu (70, 200, 2) -> (2, 70, 200) yap (H, W, C -> C, H, W)
-            # Eğer kanal sayısı (2) zaten en sondayysa transpoze et
-            if len(obs.shape) == 3 and obs.shape[-1] == 2:
-                obs = np.transpose(obs, (2, 0, 1))
 
         return obs
 
@@ -911,7 +896,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
         if self.env_name == 'NH_center':
             distance_reward_coef = 500
         else:
-            distance_reward_coef = 40
+            distance_reward_coef = 50
 
         # ======================================================================
         # 1. SHAPING ÖDÜLLERİ (HER ADIMDA)

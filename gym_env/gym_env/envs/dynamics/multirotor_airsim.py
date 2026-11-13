@@ -43,7 +43,7 @@ class MultirotorDynamicsAirsim():
         self.client.setAngleLevelControllerGains(airsim.AngleLevelControllerGains(
             airsim.PIDGains(2.5, 0.0, 0.0),  # Roll
             airsim.PIDGains(2.5, 0.0, 0.0),  # Pitch
-            airsim.PIDGains(4, 0, 0.0)   # Yaw 
+            airsim.PIDGains(3.5, 0, 0.0)   # Yaw 
         ))
 
         self.client.setVelocityControllerGains(vel_gains)
@@ -182,7 +182,7 @@ class MultirotorDynamicsAirsim():
         # -------------------------------------------------------
         # action[0] -> [-1, 1]
         # delta -> İvme * dt (Örn: 0.15 m/s artış)
-        delta_v_xy = action[0] * self.v_xy_delta_max * 1.1 #Offset var
+        delta_v_xy = action[0] * self.v_xy_delta_max 
         
         self.v_xy_sp = np.clip(
             self.prev_v_xy_sp + delta_v_xy,
@@ -197,7 +197,7 @@ class MultirotorDynamicsAirsim():
         # cmd -> [-60, 60] deg/s (Hız komutu)
         # Artık "prev_yaw" veya "modulo" hesabına GEREK YOK.
         
-        self.yaw_rate_cmd_deg = action[1] * self.yaw_rate_max_deg * 1.1 #Offset var 
+        self.yaw_rate_cmd_deg = action[1] * self.yaw_rate_max_deg
 
         # -------------------------------------------------------
         # 4. 3D Navigasyon (Hazırlık)
