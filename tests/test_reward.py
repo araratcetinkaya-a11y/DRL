@@ -1,4 +1,5 @@
-"""Unit tests for the reward terms (gym_env/core/reward.py), with the thesis coefficients."""
+"""Unit tests for the reward terms (gym_env/core/reward.py), with the coefficients of the thesis
+training run (docs/TRAINING_RUN.md)."""
 import subprocess
 import sys
 
@@ -17,15 +18,15 @@ from gym_env.core.reward import (
 
 SAFE_DISTANCE = 2.0
 K_OBS = 0.5
-K_SPEED = 50.0
-MAX_SAFE_SPEED = 3.5
+K_SPEED = 1.0
+MAX_SAFE_SPEED = 4.0
 GOAL_DISTANCE = 50.0
 
 
 # ------------------------------------------------------------ distance progress
 @pytest.mark.parametrize(
     "d_prev, d_now, expected",
-    [(50.0, 49.5, 0.4), (50.0, 50.0, 0.0), (49.5, 50.0, -0.4), (10.0, 0.0, 8.0)],
+    [(50.0, 49.5, 0.5), (50.0, 50.0, 0.0), (49.5, 50.0, -0.5), (10.0, 0.0, 10.0)],
 )
 def test_distance_progress_reward(d_prev, d_now, expected):
     assert distance_progress_reward(d_prev, d_now, GOAL_DISTANCE) == pytest.approx(expected)
@@ -33,10 +34,10 @@ def test_distance_progress_reward(d_prev, d_now, expected):
 
 def test_distance_progress_sums_to_coefficient_over_a_full_approach():
     """Potential-based shaping: the per-step terms telescope, so going from the start to the goal
-    adds up to coef = 40 whatever path the drone takes."""
+    adds up to coef = 50 whatever path the drone takes."""
     distances = [50.0, 47.0, 48.5, 30.0, 12.0, 12.5, 0.0]
     total = sum(distance_progress_reward(a, b, GOAL_DISTANCE) for a, b in zip(distances, distances[1:]))
-    assert total == pytest.approx(40.0)
+    assert total == pytest.approx(50.0)
 
 
 def test_distance_coefficient_can_be_changed():
@@ -63,9 +64,9 @@ def test_obstacle_penalty_starts_exactly_at_the_bubble_boundary():
     [
         (5.0, 5.0, 0.0),    # outside the bubble: no penalty even at full speed
         (1.5, 3.0, 0.0),    # inside, but slower than the safe speed
-        (1.5, 3.5, 0.0),    # exactly at the safe speed
-        (1.5, 4.5, 50.0),   # 1 m/s too fast -> 50 * 1^2
-        (1.5, 5.0, 112.5),  # 1.5 m/s too fast -> 50 * 1.5^2
+        (1.5, 4.0, 0.0),    # exactly at the safe speed
+        (1.5, 4.5, 0.25),   # 0.5 m/s too fast -> 1 * 0.5^2
+        (1.5, 5.0, 1.0),    # 1 m/s too fast -> 1 * 1^2
     ],
 )
 def test_speed_near_obstacle_penalty(dist, v_xy, expected):

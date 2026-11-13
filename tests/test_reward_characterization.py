@@ -1,7 +1,7 @@
-"""Characterization tests: compute_reward_final gives the same rewards as the thesis code.
+"""Characterization tests: compute_reward_final gives the same rewards as the training-run code.
 
-The values were recorded by running the frozen thesis code (tag thesis-final) on the fake AirSim
-client before compute_reward_final was changed to use gym_env/core/reward.py.
+The values were recorded by running the code of the thesis training run (tag thesis-final.1,
+see docs/TRAINING_RUN.md) on the fake AirSim client.
 
 1. A scripted episode: ten steps accelerating towards an obstacle at 10 m, three steps with
    changing actions (jerk penalties), then the obstacle jumps to 1.5 m at about 4.5 m/s. That last
@@ -17,31 +17,31 @@ KEYS = ["r_total", "r_dist", "c_obs", "c_spd_obs", "c_jerk_fwd", "c_jerk_yaw"]
 
 # (action, obstacle distance [m], [r_total, r_dist, c_obs, c_spd_obs, c_jerk_fwd, c_jerk_yaw], done)
 EPISODE = [
-    ((1.0, 0.0), 10.0, [-0.0049517139873444214, 0.02004828601265558, 0.0, 0.0, 0.025, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.036011330648506146, 0.036011330648506146, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.05184433807064011, 0.05184433807064011, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.06748848079512867, 0.06748848079512867, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.08288380107955504, 0.08288380107955504, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.09796885862099884, 0.09796885862099884, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.11268037528772083, 0.11268037528772083, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.12695287699905294, 0.12695287699905294, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.14071833343662093, 0.14071833343662093, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.0), 10.0, [0.15390579700279544, 0.15390579700279544, 0.0, 0.0, 0.0, 0.0], False),
-    ((1.0, 0.5), 10.0, [0.15894104336472195, 0.16644104336472196, 0.0, 0.0, 0.0, 0.0075], False),
-    ((0.0, -1.0), 10.0, [0.054277206280125945, 0.14677720628012594, 0.0, 0.0, 0.025, 0.0675], False),
-    ((-1.0, 1.0), 10.0, [0.01705295354270675, 0.16205295354270674, 0.0, 0.0, 0.025, 0.12], False),
-    ((1.0, 0.0), 1.5, [-75.11346320821889, 0.14153679178112383, 0.125, 50.0, 0.1, 0.03], True),
+    ((1.0, 0.0), 10.0, [6.0357515819474405e-05, 0.025060357515819476, 0.0, 0.0, 0.025, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.04501416331063268, 0.04501416331063268, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.06480542258830013, 0.06480542258830013, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.08436060099391085, 0.08436060099391085, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.1036047513494438, 0.1036047513494438, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.12246107327624856, 0.12246107327624856, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.14085046910965104, 0.14085046910965104, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.15869109624881617, 0.15869109624881617, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.17589791679577615, 0.17589791679577615, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.0), 10.0, [0.19238224625349432, 0.19238224625349432, 0.0, 0.0, 0.0, 0.0], False),
+    ((1.0, 0.5), 10.0, [0.20055130420590245, 0.20805130420590245, 0.0, 0.0, 0.0, 0.0075], False),
+    ((0.0, -1.0), 10.0, [0.09097150785015742, 0.18347150785015742, 0.0, 0.0, 0.025, 0.0675], False),
+    ((-1.0, 1.0), 10.0, [0.05756619192838344, 0.20256619192838343, 0.0, 0.0, 0.025, 0.12], False),
+    ((1.0, 0.0), 1.5, [-25.328079010273594, 0.1769209897264048, 0.125, 0.25, 0.1, 0.03], True),
 ]
 
 # total reward, distance term (each case starts from a fresh, seeded environment)
 TERMINAL = {
-    "reach": (69.6, 39.6),      # 0.5 m from the goal: 40 * 49.5 / 50 + 30
+    "reach": (79.5, 49.5),      # 0.5 m from the goal: 50 * 49.5 / 50 + 30
     "crash": (-25.0, 0.0),
-    "outside": (-88.74904713883294, -78.74904713883294),
+    "outside": (-108.43630892354116, -98.43630892354116),
 }
 
 
-def test_scripted_episode_rewards_match_thesis_code(env, client):
+def test_scripted_episode_rewards_match_training_run_code(env, client):
     env.reset()
 
     for step, (action, obstacle_m, expected_terms, expected_done) in enumerate(EPISODE):
@@ -68,7 +68,7 @@ def leave_workspace(raw, client):
 
 
 @pytest.mark.parametrize("case, setup", [("reach", place_at_goal), ("crash", collide), ("outside", leave_workspace)])
-def test_terminal_rewards_match_thesis_code(thesis_cfg, case, setup):
+def test_terminal_rewards_match_training_run_code(thesis_cfg, case, setup):
     environment = build_env(thesis_cfg)
     environment.reset()
     raw = environment.unwrapped

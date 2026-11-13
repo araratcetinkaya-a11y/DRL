@@ -5,9 +5,10 @@ Per step:  reward = distance progress - obstacle penalty - speed-near-obstacle p
 At the end of an episode one terminal reward is added: reach +30, crash -25, outside -10
 (checked in this order; a time-limit end adds nothing).
 
-The coefficients are hard-coded in `AirsimGymEnv.__init__` (thesis values): SAFE_DISTANCE = 2 m,
-k_obs_penalty = 0.5, k_speed_near_obs = 50, max_safe_speed_near_obs = 3.5 m/s,
-k_jerk_fwd = 0.025, k_jerk_yaw = 0.03; distance coefficient 40 (500 in NH_center).
+The coefficients are hard-coded in `AirsimGymEnv.__init__` and are the values of the thesis training
+run (docs/TRAINING_RUN.md): SAFE_DISTANCE = 2 m, k_obs_penalty = 0.5, k_speed_near_obs = 1,
+max_safe_speed_near_obs = 4 m/s, k_jerk_fwd = 0.025, k_jerk_yaw = 0.03; distance coefficient 50
+(500 in NH_center).
 
 Note (docs/AUDIT.md, Q3): with the thesis config, crash_distance = SAFE_DISTANCE = 2 m, so the two
 obstacle penalties are only non-zero in the step in which the drone crashes.
@@ -18,7 +19,7 @@ REWARD_CRASH = -25.0
 REWARD_OUTSIDE = -10.0
 
 
-def distance_progress_reward(d_prev, d_now, goal_distance, coef=40.0):
+def distance_progress_reward(d_prev, d_now, goal_distance, coef=50.0):
     """Positive when the drone gets closer to the goal; scaled by the start distance."""
     return coef * (d_prev - d_now) / goal_distance
 

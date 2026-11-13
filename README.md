@@ -55,7 +55,7 @@ The environment returns a dictionary observation:
 Storing the depth as uint8 and the state separately as float32 cuts the replay buffer from 224 KB to
 28 KB per transition (about 8x), without quantizing the state. SB3 (`MultiInputPolicy`) divides the
 depth by 255 before the CNN. The thesis models used a float32 layout and are evaluated with the code
-of the `thesis-final` tag.
+of the `thesis-final.1` tag.
 
 ## Running the tests
 
@@ -73,8 +73,9 @@ GitHub Actions (`.github/workflows/ci.yml`) builds the environment from scratch 
 `ruff` on the new code and the test suite with coverage on every push and pull request to `dev`
 and `main`.
 
-Branches: `thesis` (tag `thesis-final`) holds the frozen code that trained the thesis models;
-development happens on `dev` through pull requests.
+Branches: `thesis` holds the frozen thesis code. The tag `thesis-final.1` is the exact code of the
+training run behind the thesis results (recovered from W&B, see `docs/TRAINING_RUN.md`); `dev` uses
+the same environment and reward settings. Development happens on `dev` through pull requests.
 
 ## Acknowledgements
 

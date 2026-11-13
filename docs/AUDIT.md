@@ -17,7 +17,7 @@ No code was changed in this phase. Line numbers refer to this commit.
 3. **Q3 (report only, Nov 12, 2026):** with the thesis config `crash_distance = 2` and
    `SAFE_DISTANCE = 2` (hard-coded), the obstacle penalty and the speed-near-obstacle penalty can only
    be non-zero in the step in which the drone crashes. In practice they make the crash penalty larger
-   for fast crashes: -25 - 50 * (v - 3.5)^2 - 0.5 * (2 - d)^2. See "Reward (Q3)" below.
+   for fast crashes: -25 - 1 * (v - 4)^2 - 0.5 * (2 - d)^2 (training-run values). See "Reward (Q3)" below.
 4. The final training path uses `MultirotorDynamicsAirsim`, `compute_reward_final` (second
    definition), `CNN_GAP_new` wrapped by `with_permute`, and `SAC` with `CnnPolicy`.
 5. `features_dim` is not hard-coded in the extractor; it is `cnn_feature_num + state_feature_length`
@@ -27,11 +27,17 @@ No code was changed in this phase. Line numbers refer to this commit.
    at import time. The dynamics classes connect to AirSim in `__init__`. Nothing can be imported in
    CI without fakes for these.
 7. About 40% of the Python files are legacy or one-off experiment scripts (list below).
+8. **Training run recovered (Nov 13, 2026):** the W&B run behind the thesis results stores the git
+   commit (79739ba) and a `diff.patch` of all uncommitted changes. Commit + patch is the exact
+   training code. `thesis-final` differs from it in more than the 1.1 gain (reward coefficients,
+   start height, episode length, yaw gain, buffer size, the uint8 block). The training code is on
+   `thesis` as tag `thesis-final.1`, and `dev` uses the training values again. Details:
+   `docs/TRAINING_RUN.md`.
 
 ## Environment
 | Item | Value | Source |
 | --- | --- | --- |
-| Python | 3.9.13 | `env/requirements-thesis-lock.txt` |
+| Python | 3.9.13 (setup script); the training run used 3.8.10 (W&B) | `env/requirements-thesis-lock.txt` |
 | torch | 1.10.1+cu113 | lock file |
 | gym | 0.19.0 (old step API: obs, reward, done, info) | lock file |
 | Stable-Baselines3 | fork heleidsn/stable-baselines3 @ 012c977, 1.4.1a0 | submodule |
@@ -41,7 +47,7 @@ No code was changed in this phase. Line numbers refer to this commit.
 ## Active code path (final config `configs/config_Maze_SimpleMultirotor_2D.ini`)
 | Setting | Value | Code |
 | --- | --- | --- |
-| env_name | SimpleAvoid (start [0,0,3], goal 50 m, random heading, max 1000 steps) | `airsim_env.py` `set_config` |
+| env_name | SimpleAvoid (start [0,0,5], goal 50 m, random heading, max 400 steps; `thesis-final`: [0,0,3], 1000) | `airsim_env.py` `set_config` |
 | dynamic_name | Multirotor -> `MultirotorDynamicsAirsim` | `dynamics/multirotor_airsim.py` |
 | perception | depth, 70x200, max_depth_meters 15 | `get_obs_image` |
 | state | 4 values (distance, relative yaw, v_xy, yaw rate) + 2 (last action) = 6, normalized to ~[0, 1] | `_get_state_feature` (L316) |
@@ -49,13 +55,14 @@ No code was changed in this phase. Line numbers refer to this commit.
 | dt | 0.1 s, lockstep via `simPause` + `simContinueForTime` | `set_action` |
 | reward | `reward_final` -> `compute_reward_final` (second definition, L901) | `airsim_env.py` |
 | algorithm | SAC, `CnnPolicy`, extractor `CNN_GAP_new` (L412) wrapped by `with_permute` (thread_train L31, L271) | `scripts/utils/thread_train.py` |
-| replay buffer | 300000, batch 256, learning_starts 25000 | config |
+| replay buffer | 100000 (`thesis-final`: 300000), batch 256, learning_starts 25000 | config |
 | entry points | `scripts/start_train_with_plot.py`, `scripts/start_evaluate_with_plot.py` (PyQt GUI) | |
 
-Reward coefficients are hard-coded in `AirsimGymEnv.__init__` (L47-52): SAFE_DISTANCE 2 m,
-k_obs_penalty 0.5, k_speed_near_obs 50, max_safe_speed_near_obs 3.5 m/s, k_jerk_fwd 0.025,
-k_jerk_yaw 0.03. Terminal rewards in `compute_reward_final`: reach +30, crash -25, outside -10;
-distance shaping coefficient 40.
+Reward coefficients are hard-coded in `AirsimGymEnv.__init__` (L47-52). Training run (and `dev`
+since the training values were restored): SAFE_DISTANCE 2 m, k_obs_penalty 0.5, k_speed_near_obs 1,
+max_safe_speed_near_obs 4 m/s, k_jerk_fwd 0.025, k_jerk_yaw 0.03, distance shaping coefficient 50.
+`thesis-final` has k_speed_near_obs 50, max_safe_speed_near_obs 3.5 and coefficient 40 (changed
+after training). Terminal rewards in `compute_reward_final`: reach +30, crash -25, outside -10.
 
 ## Phase 3: Dict observation (PR 3a tests, PR 3b implementation)
 Since PR 3b, `get_obs` returns `get_obs_dict()`:
@@ -74,7 +81,7 @@ Since PR 3b, `get_obs` returns `get_obs_dict()`:
 
 Behavior change: only the depth precision (uint8 instead of float32). A short training run on the
 university PC is needed to confirm training still works. Models trained before PR 3b cannot be
-loaded with this code (different observation space); use the `thesis-final` worktree.
+loaded with this code (different observation space); use a worktree of the `thesis-final.1` tag.
 
 Not updated yet (report only):
 - `thread_evaluation.py` saves `obs_eval.npy` as a list of dicts; `result_analysis.py` and
@@ -115,8 +122,9 @@ Most likely explanation: the final training used steps 1-3 only (float32, channe
 `with_permute`), and the uint8/transpose block was added later. This matches the note that the
 final training stored both channels as float32.
 
-Working assumption (decided Nov 11, 2026): the thesis models were trained with the float32 path
-(steps 1-3). Evidence:
+Confirmed (Nov 13, 2026): the W&B config of the training run records
+`observation_space = Box(0.0, 1.0, (70, 200, 2), float32)` and the recovered training code has no
+uint8 block. Earlier evidence (working assumption of Nov 11, 2026):
 - with the block, `DummyVecEnv` cannot even reset (test `test_dummy_vec_env_can_reset`), so no
   training could have run with it;
 - commit 79739ba (Nov 19, 2025) declares a float32 `observation_space` and `get_obs` returns
@@ -133,9 +141,8 @@ covered by the Q1 tests.
 
 How to confirm without the simulator (first characterization test in Phase 1): build the env with
 a fake AirSim client, call `reset()`, and check `env.observation_space.contains(obs)` and
-`obs.shape`. If Q1 is confirmed, evaluating old models needs the block at L511-523 removed. That
-fix belongs on `thesis` via PR, tagged `thesis-final.1` (roadmap Phase -1), together with the
-Q2 fix below.
+`obs.shape`. Done: the tag `thesis-final.1` on `thesis` restores the training code, which has no
+uint8 block (docs/TRAINING_RUN.md).
 
 ## Action gain (Q2)
 | Code | Gain | Speed change per step | Max yaw rate |
@@ -144,21 +151,20 @@ Q2 fix below.
 | `thesis-final` tag (evaluation experiment) | 1.1, hard-coded | 0.44 m/s | 66 deg/s |
 | `dev` from Phase 1 (PR 1c) | config `action_gain`, default 1.0 | 0.4 m/s | 60 deg/s |
 
-To evaluate old models under training conditions with the frozen code, the two `* 1.1`
-factors in `set_action` must be removed. Like the Q1 fix, this belongs on `thesis` via PR,
-tagged `thesis-final.1`. To repeat the evaluation experiment on `dev`, set
-`action_gain = 1.1` in the [multirotor] section of the config.
+To evaluate old models under training conditions, use the tag `thesis-final.1` (training code,
+gain 1.0). To repeat the evaluation experiment on `dev`, set `action_gain = 1.1` in the
+[multirotor] section of the config.
 
 ## Reward (Q3)
 Active function: second definition of `compute_reward_final` in `airsim_env.py`. Since Phase 1
 (PR 1e) its terms come from `gym_env/core/reward.py`; values are covered by a characterization test
-recorded from the frozen code.
+recorded from the training-run code (`thesis-final.1`).
 
-| Term | Formula (thesis values) | Active when |
+| Term | Formula (training-run values) | Active when |
 | --- | --- | --- |
-| distance progress | 40 * (d_prev - d_now) / 50 | every step |
+| distance progress | 50 * (d_prev - d_now) / 50 | every step |
 | obstacle penalty | 0.5 * (2 - d_obs)^2 | d_obs < 2 m |
-| speed near obstacle | 50 * (v_xy - 3.5)^2 | d_obs < 2 m and v_xy > 3.5 m/s |
+| speed near obstacle | 1 * (v_xy - 4)^2 | d_obs < 2 m and v_xy > 4 m/s |
 | forward jerk | 0.025 * (a0 - a0_prev)^2 | every step |
 | yaw jerk | 0.03 * (a1 - a1_prev)^2 | every step |
 | terminal | reach +30, crash -25, outside -10 (in this order) | done |

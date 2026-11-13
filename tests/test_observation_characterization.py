@@ -2,7 +2,8 @@
 
 EXPECTED was recorded by running the frozen thesis code (tag thesis-final) on the fake AirSim
 client before get_obs_image and _get_state_feature were changed to use
-gym_env/core/observation.py. The scene is a depth image that goes from 1 m (left) to 30 m (right)
+gym_env/core/observation.py. The code of the thesis training run (tag thesis-final.1,
+docs/TRAINING_RUN.md) gives exactly the same values, so this test also covers the training run. The scene is a depth image that goes from 1 m (left) to 30 m (right)
 with an obstacle at 2.5 m in the middle. After reset, the drone takes five steps.
 
 For each observation the test compares: the 6 state values, 8 depth pixels, the sum of the depth
