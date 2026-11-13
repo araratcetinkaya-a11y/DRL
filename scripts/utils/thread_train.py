@@ -28,6 +28,22 @@ sys.path.append(os.path.dirname(CURRENT_DIR))
 
 
 
+class SeedCycler(gym.Wrapper):
+    def __init__(self, env, seeds):
+        super().__init__(env)
+        self._seeds = itertools.cycle(seeds)
+
+    def reset(self):
+        # gym==0.19: seed, reset'e parametre olarak verilmez;
+        # env.seed(...) + env.reset() kullanılır
+        seed = next(self._seeds)
+        if hasattr(self.env, "seed"):
+            self.env.seed(seed)
+        if hasattr(self.env.action_space, "seed"):
+            self.env.action_space.seed(seed)
+        return self.env.reset()
+
+
 def make_eval_env(cfg):
     # 0) EVAL log klasörü
     eval_log_dir = cfg.get('EVAL','eval_log_dir') if cfg.has_option('EVAL','eval_log_dir') else './logs_eval'
