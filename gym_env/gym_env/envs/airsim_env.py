@@ -77,7 +77,7 @@ class AirsimGymEnv(gym.Env, QtCore.QThread):
 
         # create LGMD agent
         if self.perception_type == 'lgmd':
-            self.lgmd = LGMD(type='origin',  p_threshold=50, s_threshold=0, Ki=2, i_layer_size=3, activate_coeff=1, use_on_off=True)
+            self.lgmd = LGMD(type='origin',  p_threshold=50, s_threshold=0, Ki=2, i_layer_size=3, activate_coeff=1, use_on_off=True)  # noqa: F821 (dead branch, see docs/AUDIT.md)
             self.split_out_last = np.array([0, 0, 0, 0, 0])
 
         print('Environment: ', self.env_name, "Dynamics: ", self.dynamic_name,

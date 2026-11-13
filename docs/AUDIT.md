@@ -229,6 +229,12 @@ and the saved run configs. No change was made.
   gamma = 1 (SAC uses gamma = 0.99).
 - `dynamic_model.last_action` (used in the state) and `env.last_action` (used for the jerk penalty)
   are two separate copies; check that both are updated in the same step.
+- A time-limit episode lasts `max_episode_steps + 1` steps (401): `is_done` compares `step_num`
+  before it is increased. Same in the training-run code, so it is kept (`tests/test_eval_env.py`).
+- Phase 3 (PR 3b) removed `SeedCycler` from `thread_train.py` by mistake together with
+  `with_permute`; the evaluation env then failed with a NameError in the first training run on the
+  university PC (Nov 13, 2026). Restored, covered by `tests/test_eval_env.py`, and CI now checks all
+  code for undefined names (ruff F821).
 
 ## Files to change, by phase
 | Phase | Files |

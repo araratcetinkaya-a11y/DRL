@@ -56,6 +56,9 @@ jobs:
       - name: Lint new code with ruff
         run: ruff check tests gym_env/gym_env/core
 
+      - name: Check all code for undefined names (a missing class or import fails here, not in training)
+        run: ruff check --select F821 scripts gym_env/gym_env
+
       - name: Run tests with coverage
         run: python -m pytest -m "not airsim" --cov=gym_env --cov-report=term --cov-report=xml
 
