@@ -23,6 +23,12 @@ import os
 import sys
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(CURRENT_DIR))
+from callbacks.cnn_health import make_cnn_health_callback  # noqa: E402  (needs the path added above)
+
+
+def get_seed(cfg):
+    """Random seed of the algorithm: optional `seed` in [DRL]; 0 (the thesis value) when it is missing."""
+    return cfg.getint('DRL', 'seed') if cfg.has_option('DRL', 'seed') else 0
 
 
 
@@ -268,6 +274,8 @@ class TrainingThread(QtCore.QThread):
         #! ---------------------------------algorithm selection-------------------------------------
         algo = self.cfg.get('options', 'algo')
         print('algo: ', algo)
+        seed = get_seed(self.cfg)
+        print('seed: ', seed)
         if algo == 'PPO':
             model = PPO(
                 policy_base,
@@ -276,7 +284,7 @@ class TrainingThread(QtCore.QThread):
                 learning_rate=self.cfg.getfloat('DRL', 'learning_rate'),
                 policy_kwargs=policy_kwargs,
                 tensorboard_log=log_path,
-                seed=0,
+                seed=seed,
                 verbose=2)
         elif algo == 'SAC':
             n_actions = self.env.action_space.shape[-1]
@@ -302,7 +310,7 @@ class TrainingThread(QtCore.QThread):
                 #ent_coef_lr=1e-4,
                 #target_entropy=-1,
                 ent_coef="auto",
-                seed=0,
+                seed=seed,
                 verbose=0)
 
             print("Actor betas:", model.actor.optimizer.defaults['betas'])
@@ -330,7 +338,7 @@ class TrainingThread(QtCore.QThread):
                 gradient_steps=self.cfg.getint('DRL', 'gradient_steps'),
                 buffer_size=self.cfg.getint('DRL', 'buffer_size'),
                 tensorboard_log=log_path,
-                seed=0,
+                seed=seed,
                 verbose=2)
         else:
             raise Exception('Invalid algo name : ', algo)
@@ -376,6 +384,14 @@ class TrainingThread(QtCore.QThread):
         #! -------------------------------------train-----------------------------------------
         
 
+        # CNN health monitor (scripts/callbacks/cnn_health.py): logs the CNN activity under
+        # "cnn_health/..." and stops a run whose image network has died ([CNN_HEALTH] in the config).
+        extra_callbacks = []
+        if algo in ('SAC', 'TD3'):
+            cnn_health_cb = make_cnn_health_callback(self.cfg)
+            if cnn_health_cb is not None:
+                extra_callbacks.append(cnn_health_cb)
+
         print('start training model')
         total_timesteps = self.cfg.getint('options', 'total_timesteps')
         self.env.model = model
@@ -386,7 +402,7 @@ class TrainingThread(QtCore.QThread):
             #     wandb.watch(model.actor, log_freq=100, log="all")  # log gradients
             # elif algo == 'PPO':
             #     wandb.watch(model.policy, log_freq=100, log="all")
-            combo_cb = CallbackList([
+            combo_cb = CallbackList(extra_callbacks + [
                 eval_cb,
                 WandbCallback(
                     model_save_freq=10000,
@@ -401,7 +417,7 @@ class TrainingThread(QtCore.QThread):
                 callback=combo_cb
             )
         else:
-            combo_cb = CallbackList([eval_cb])
+            combo_cb = CallbackList(extra_callbacks + [eval_cb])
             model.learn(total_timesteps, callback=combo_cb)
 
         #! ---------------------------model save----------------------------------------------------
